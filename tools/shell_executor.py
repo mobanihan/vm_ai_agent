@@ -37,27 +37,41 @@ class ShellExecutor:
         env_vars = kwargs.get('env_vars', {})
         capture_output = kwargs.get('capture_output', True)
         
-        # Prepare environment
+        # Prepare environment with proper PATH
         env = os.environ.copy()
+        # Ensure PATH includes common binary locations
+        if 'PATH' not in env or not env['PATH']:
+            env['PATH'] = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+        else:
+            # Add common paths if not already present
+            common_paths = ['/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin']
+            current_paths = env['PATH'].split(':')
+            for path in common_paths:
+                if path not in current_paths:
+                    env['PATH'] = f"{env['PATH']}:{path}"
+        
         env.update(env_vars)
         
         logger.info(f"Executing command: {command} (timeout: {timeout}s, cwd: {working_dir})")
+        logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
         
         try:
-            # Create subprocess
+            # Create subprocess with explicit shell
             if capture_output:
                 process = await asyncio.create_subprocess_shell(
                     command,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=working_dir,
-                    env=env
+                    env=env,
+                    executable='/bin/bash'  # Explicitly use bash
                 )
             else:
                 process = await asyncio.create_subprocess_shell(
                     command,
                     cwd=working_dir,
-                    env=env
+                    env=env,
+                    executable='/bin/bash'  # Explicitly use bash
                 )
             
             # Execute with timeout
@@ -86,6 +100,11 @@ class ShellExecutor:
                 "timestamp": datetime.now().isoformat(),
                 "success": process.returncode == 0
             }
+            
+            # Add helpful error message for command not found
+            if process.returncode == 127:
+                result["error_hint"] = f"Command not found: '{command.split()[0] if command.split() else command}'. Check if the command is installed and PATH is correct."
+                logger.warning(f"Command not found (return code 127): {command}")
             
             logger.info(f"Command completed: return_code={process.returncode}")
             return result
