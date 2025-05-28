@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# netifaces is required for network interface handling
+sudo apt install -y build-essential python3-dev
+
 # VM Agent Installation Script
 set -e
 

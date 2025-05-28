@@ -10,7 +10,10 @@ import yaml
 from pathlib import Path
 
 # Import our tools
-from tools import ShellExecutor, FileManager, SystemMonitor, LogAnalyzer
+from tools.shell_executor import ShellExecutor
+from tools.file_manager import FileManager
+from tools.system_monitor import SystemMonitor
+from tools.log_analyzer import LogAnalyzer
 
 # Configure logging
 logging.basicConfig(
