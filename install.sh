@@ -92,4 +92,24 @@ systemctl daemon-reload
 systemctl enable --now $SERVICE_NAME
 systemctl restart $SERVICE_NAME
 
+
+echo "Installation completed!"
+echo ""
+echo "To start the service:"
+echo "  sudo systemctl start $SERVICE_NAME"
+echo ""
+echo "To check status:"
+echo "  sudo systemctl status $SERVICE_NAME"
+echo ""
+echo "To view logs:"
+echo "  sudo journalctl -u $SERVICE_NAME -f"
+echo ""
+echo "Configuration file: $INSTALL_DIR/config/agent_config.yaml"
+echo "Environment file: /etc/default/vm-agent"
+echo ""
+echo "Make sure to:"
+echo "1. Set unique VM_ID in /etc/default/vm-agent"
+echo "2. Configure API_KEY for security"
+echo "3. Review and adjust agent_config.yaml as needed"
+
 echo "VM Agent installed or updated successfully."
