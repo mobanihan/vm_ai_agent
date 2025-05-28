@@ -8,7 +8,7 @@ server:
   host: "0.0.0.0"
   port: 8080
   max_connections: 100
-  request_timeout: 30
+  request_timeout: 300
   
 security:
   api_key: ${API_KEY}  # Set via environment variable
@@ -20,8 +20,8 @@ security:
 tools:
   shell_executor:
     enabled: true
-    timeout_default: 30
-    timeout_max: 300
+    timeout_default: 300
+    timeout_max: 3000
     allowed_commands: "*"  # Restrict in production
     blocked_commands:
       - "rm -rf /"
