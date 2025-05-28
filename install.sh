@@ -3,15 +3,17 @@
 # netifaces is required for network interface handling
 sudo apt install -y build-essential python3-dev
 
-# VM Agent Installation Script
+# VM Agent Installation/Update Script
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="/opt/vm-agent"
 SERVICE_NAME="vm-agent"
 LOG_DIR="/var/log"
+ENV_FILE="/etc/default/vm-agent"
+SYSTEMD_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
-echo "Installing VM Agent..."
+echo "Installing or Updating VM Agent..."
 
 # Check if running as root
 if [[ $EUID -ne 0 ]]; then
@@ -19,28 +21,46 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# Create installation directory
-echo "Creating installation directory..."
+# Set VM_ID if not provided
+if [ -z "$VM_ID" ]; then
+    VM_ID=$(hostname)
+    echo "VM_ID not set, using hostname: $VM_ID"
+fi
+
+# Ensure installation directory exists
 mkdir -p $INSTALL_DIR
+
+# Copy updated files
+echo "Copying updated files..."
 cp -r $SCRIPT_DIR/* $INSTALL_DIR/
 chown -R root:root $INSTALL_DIR
 
-# Create virtual environment
-echo "Setting up Python virtual environment..."
+# Setup virtual environment
 cd $INSTALL_DIR
-python3 -m venv venv
+if [ ! -d "venv" ]; then
+    echo "Creating virtual environment..."
+    python3 -m venv venv
+fi
+
+echo "Installing Python dependencies..."
 source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# Create log directory
+# Ensure log file exists
 mkdir -p $LOG_DIR
 touch $LOG_DIR/vm-agent.log
 chmod 644 $LOG_DIR/vm-agent.log
 
-# Create systemd service
-echo "Creating systemd service..."
-cat > /etc/systemd/system/${SERVICE_NAME}.service << EOF
+# Create or update environment file
+cat > $ENV_FILE << EOF
+VM_ID=$VM_ID
+API_KEY=${API_KEY:-"default-key-change-me"}
+EOF
+
+# Create or update systemd service file
+echo "Creating or updating systemd service..."
+cat > $SYSTEMD_FILE << EOF
 [Unit]
 Description=VM Agent MCP Server
 After=network.target
@@ -55,6 +75,7 @@ Environment=PATH=$INSTALL_DIR/venv/bin
 Environment=VM_ID=\${VM_ID}
 Environment=API_KEY=\${API_KEY}
 Environment=AGENT_CONFIG=$INSTALL_DIR/config/agent_config.yaml
+EnvironmentFile=$ENV_FILE
 ExecStart=$INSTALL_DIR/venv/bin/python server.py
 Restart=always
 RestartSec=5
@@ -66,40 +87,9 @@ SyslogIdentifier=vm-agent
 WantedBy=multi-user.target
 EOF
 
-# Set VM_ID if not provided
-if [ -z "$VM_ID" ]; then
-    VM_ID=$(hostname)
-    echo "VM_ID not set, using hostname: $VM_ID"
-fi
-
-# Create environment file
-cat > /etc/default/vm-agent << EOF
-VM_ID=$VM_ID
-API_KEY=${API_KEY:-"default-key-change-me"}
-EOF
-
-# Update systemd service to use environment file
-sed -i '/\[Service\]/a EnvironmentFile=/etc/default/vm-agent' /etc/systemd/system/${SERVICE_NAME}.service
-
-# Reload systemd and enable service
+# Reload systemd, enable, and restart service
 systemctl daemon-reload
-systemctl enable $SERVICE_NAME
+systemctl enable --now $SERVICE_NAME
+systemctl restart $SERVICE_NAME
 
-echo "Installation completed!"
-echo ""
-echo "To start the service:"
-echo "  sudo systemctl start $SERVICE_NAME"
-echo ""
-echo "To check status:"
-echo "  sudo systemctl status $SERVICE_NAME"
-echo ""
-echo "To view logs:"
-echo "  sudo journalctl -u $SERVICE_NAME -f"
-echo ""
-echo "Configuration file: $INSTALL_DIR/config/agent_config.yaml"
-echo "Environment file: /etc/default/vm-agent"
-echo ""
-echo "Make sure to:"
-echo "1. Set unique VM_ID in /etc/default/vm-agent"
-echo "2. Configure API_KEY for security"
-echo "3. Review and adjust agent_config.yaml as needed"
+echo "VM Agent installed or updated successfully."
