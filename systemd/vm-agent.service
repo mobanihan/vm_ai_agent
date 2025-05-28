@@ -1,0 +1,27 @@
+[Unit]
+Description=VM Agent MCP Server
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/vm-agent
+Environment=PATH=/opt/vm-agent/venv/bin
+EnvironmentFile=/etc/default/vm-agent
+ExecStart=/opt/vm-agent/venv/bin/python server.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vm-agent
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log /tmp /opt/vm-agent
+
+[Install]
+WantedBy=multi-user.target
