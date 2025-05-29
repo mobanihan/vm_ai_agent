@@ -3,6 +3,8 @@
 # netifaces is required for network interface handling
 sudo apt install -y build-essential python3-dev
 
+sudo apt install python3.12-venv
+
 # VM Agent Installation Script
 set -e
 
