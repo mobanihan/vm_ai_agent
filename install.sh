@@ -86,6 +86,7 @@ sed -i '/\[Service\]/a EnvironmentFile=/etc/default/vm-agent' /etc/systemd/syste
 # Reload systemd and enable service
 systemctl daemon-reload
 systemctl enable $SERVICE_NAME
+systemctl restart "$SERVICE_NAME"   # Optional: start now
 
 echo "Installation completed!"
 echo ""
