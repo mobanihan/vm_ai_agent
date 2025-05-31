@@ -77,6 +77,29 @@ def get_ca_certificate(self) -> str:
 
 ## Additional Improvements
 
+### **🆕 Python Environment Auto-Detection**
+
+Added intelligent Python environment detection to the installer to automatically handle virtual environments and prevent the "ModuleNotFoundError" issues.
+
+**New Features:**
+- **Auto-detection of Python interpreter** - Uses the same Python that runs the installer
+- **Virtual environment support** - Automatically detects and uses venv Python
+- **Intelligent wrapper script** - Falls back to common Python locations if original is moved
+- **Environment validation** - Tests if Python can import required modules before installation
+
+### **New Installation Options**
+
+```bash
+# Install with auto-detected Python (recommended)
+sudo python3 -m vm_agent.installer --orchestrator-url <URL>
+
+# Install with wrapper script for complex environments
+sudo python3 -m vm_agent.installer --orchestrator-url <URL> --use-wrapper
+
+# Diagnostic tool to troubleshoot environment issues
+python3 scripts/diagnose_environment.py
+```
+
 ### New Helper Methods Added
 
 1. **SecurityManager**:
@@ -87,6 +110,20 @@ def get_ca_certificate(self) -> str:
 2. **VMAgentServer**:
    - `_ensure_credentials()` - Ensure basic credentials exist
    - `is_ready()` - Check if server is ready to accept requests
+
+3. **🆕 VMAgentInstaller**:
+   - `create_wrapper_script()` - Create intelligent wrapper with fallback detection
+   - Auto-detection of virtual environments
+   - Support for complex Python environment setups
+
+### **🆕 Environment Diagnostic Tool**
+
+Created `scripts/diagnose_environment.py` to help troubleshoot installation issues:
+- ✅ Checks Python installation and virtual environment
+- ✅ Validates all required dependencies
+- ✅ Tests vm_agent module imports
+- ✅ Examines installation paths and systemd service
+- ✅ Provides specific fix suggestions
 
 ### Enhanced Error Handling
 

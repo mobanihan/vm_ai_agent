@@ -101,54 +101,66 @@ class VMAgentInstaller:
             click.echo(f"❌ Failed to create directories: {e}")
             return False
     
-    def install_service_file(self) -> bool:
-        """Install systemd service file"""
+    def create_wrapper_script(self) -> bool:
+        """Create an intelligent wrapper script that handles environment detection"""
         try:
-            service_content = f"""[Unit]
-Description=VM Agent for AI Infrastructure Management
-After=network.target
-Wants=network.target
+            # Auto-detect the correct Python interpreter
+            python_executable = sys.executable
+            
+            wrapper_content = f"""#!/bin/bash
+# VM Agent Wrapper Script - Auto-generated
+# Handles virtual environment detection and proper Python path setup
 
-[Service]
-Type=simple
-User={self.user}
-Group={self.group}
-WorkingDirectory={self.install_dir}
-Environment=PYTHONPATH={self.install_dir}
-ExecStart=/usr/bin/python3 -m vm_agent.server
-ExecReload=/bin/kill -HUP $MAINPID
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=vm-agent
+# Set working directory
+cd {self.install_dir}
 
-# Security settings
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths={self.install_dir} /var/log/vm-agent
+# Auto-detect Python environment
+DETECTED_PYTHON="{python_executable}"
 
-[Install]
-WantedBy=multi-user.target
+# If the detected Python doesn't exist (e.g., venv was moved), try fallbacks
+if [ ! -f "$DETECTED_PYTHON" ]; then
+    echo "⚠️  Original Python not found: $DETECTED_PYTHON"
+    
+    # Try common virtual environment locations
+    for venv_path in "/root/vm_ai_agent/venv/bin/python3" "/opt/vm-agent/venv/bin/python3" "/usr/local/bin/python3" "/usr/bin/python3"; do
+        if [ -f "$venv_path" ]; then
+            echo "✓ Using fallback Python: $venv_path"
+            DETECTED_PYTHON="$venv_path"
+            break
+        fi
+    done
+fi
+
+# Test if Python can import required modules
+if ! "$DETECTED_PYTHON" -c "import aiofiles, aiohttp, vm_agent" 2>/dev/null; then
+    echo "❌ Python at $DETECTED_PYTHON cannot import required modules"
+    echo "📋 Available Python installations:"
+    find /usr/bin /usr/local/bin /root -name "python3*" 2>/dev/null | head -10
+    exit 1
+fi
+
+# Set up environment
+export PYTHONPATH="{self.install_dir}:$PYTHONPATH"
+
+# Execute the vm-agent server
+exec "$DETECTED_PYTHON" -m vm_agent.server "$@"
 """
             
-            with open(self.service_file, 'w') as f:
-                f.write(service_content)
+            wrapper_path = self.install_dir / "vm-agent-wrapper.sh"
+            with open(wrapper_path, 'w') as f:
+                f.write(wrapper_content)
             
-            os.chmod(self.service_file, 0o644)
+            # Make executable
+            wrapper_path.chmod(0o755)
+            shutil.chown(wrapper_path, self.user, self.group)
             
-            # Reload systemd
-            subprocess.run(["systemctl", "daemon-reload"], check=True)
-            
-            click.echo("✓ Installed systemd service")
+            click.echo(f"✓ Created wrapper script: {wrapper_path}")
             return True
             
         except Exception as e:
-            click.echo(f"❌ Failed to install service: {e}")
+            click.echo(f"❌ Failed to create wrapper script: {e}")
             return False
-    
+
     def create_config_file(self, orchestrator_url: str, **kwargs) -> bool:
         """Create configuration file"""
         try:
@@ -213,6 +225,73 @@ logging:
             click.echo(f"❌ Failed to create config: {e}")
             return False
     
+    def install_service_file(self, use_wrapper: bool = False) -> bool:
+        """Install systemd service file"""
+        try:
+            if use_wrapper:
+                # Create wrapper script first
+                if not self.create_wrapper_script():
+                    return False
+                
+                exec_start = f"{self.install_dir}/vm-agent-wrapper.sh"
+                click.echo("✓ Using wrapper script for service")
+            else:
+                # Auto-detect the correct Python interpreter
+                python_executable = sys.executable
+                
+                # If we're in a virtual environment, use that Python
+                if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
+                    click.echo(f"✓ Detected virtual environment, using: {python_executable}")
+                else:
+                    click.echo(f"✓ Using system Python: {python_executable}")
+                
+                exec_start = f"{python_executable} -m vm_agent.server"
+            
+            service_content = f"""[Unit]
+Description=VM Agent for AI Infrastructure Management
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User={self.user}
+Group={self.group}
+WorkingDirectory={self.install_dir}
+Environment=PYTHONPATH={self.install_dir}
+ExecStart={exec_start}
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vm-agent
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={self.install_dir} /var/log/vm-agent
+
+[Install]
+WantedBy=multi-user.target
+"""
+            
+            with open(self.service_file, 'w') as f:
+                f.write(service_content)
+            
+            os.chmod(self.service_file, 0o644)
+            
+            # Reload systemd
+            subprocess.run(["systemctl", "daemon-reload"], check=True)
+            
+            click.echo("✓ Installed systemd service")
+            return True
+            
+        except Exception as e:
+            click.echo(f"❌ Failed to install service: {e}")
+            return False
+    
     def enable_service(self) -> bool:
         """Enable and start the service"""
         try:
@@ -235,6 +314,7 @@ logging:
         orchestrator_url: str,
         provisioning_token: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        use_wrapper: bool = False,
         **kwargs
     ) -> bool:
         """Complete installation process"""
@@ -258,7 +338,7 @@ logging:
             return False
         
         # Install service
-        if not self.install_service_file():
+        if not self.install_service_file(use_wrapper=use_wrapper):
             return False
         
         # Enable and start service
@@ -268,6 +348,8 @@ logging:
         click.echo("\n✅ VM Agent installed successfully!")
         click.echo(f"📁 Installation directory: {self.install_dir}")
         click.echo(f"🔧 Service name: {self.service_name}")
+        if use_wrapper:
+            click.echo(f"📜 Wrapper script: {self.install_dir}/vm-agent-wrapper.sh")
         click.echo("\n📋 Useful commands:")
         click.echo(f"  sudo systemctl status {self.service_name}")
         click.echo(f"  sudo systemctl restart {self.service_name}")
@@ -313,9 +395,13 @@ logging:
 @click.option('--orchestrator-url', required=True, help='Orchestrator URL')
 @click.option('--provisioning-token', help='Provisioning token for auto-setup')
 @click.option('--tenant-id', help='Manual tenant ID')
+@click.option('--use-wrapper', is_flag=True, help='Use wrapper script for complex environments')
 @click.option('--uninstall', is_flag=True, help='Uninstall the service')
-def main(orchestrator_url: str, provisioning_token: str, tenant_id: str, uninstall: bool):
-    """VM Agent Service Installer"""
+def main(orchestrator_url: str, provisioning_token: str, tenant_id: str, use_wrapper: bool, uninstall: bool):
+    """VM Agent Installer - Install or uninstall the VM agent service"""
+    
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     
     installer = VMAgentInstaller()
     
@@ -325,7 +411,8 @@ def main(orchestrator_url: str, provisioning_token: str, tenant_id: str, uninsta
         success = installer.install(
             orchestrator_url=orchestrator_url,
             provisioning_token=provisioning_token,
-            tenant_id=tenant_id
+            tenant_id=tenant_id,
+            use_wrapper=use_wrapper
         )
     
     sys.exit(0 if success else 1)
