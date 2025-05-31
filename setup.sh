@@ -331,10 +331,17 @@ generate_vm_credentials() {
     echo "$api_key" > "$INSTALL_DIR/security/api_key"
     
     # Generate private key
+    log_debug "Generating RSA private key..."
     openssl genrsa -out "$INSTALL_DIR/security/vm_agent.key" 2048 2>/dev/null
     
     # Get local IP address
     local local_ip=$(hostname -I | awk '{print $1}' 2>/dev/null || ip route get 1 | grep -oP 'src \K\S+' 2>/dev/null || echo '127.0.0.1')
+    local hostname_fqdn=$(hostname -f 2>/dev/null || hostname)
+    
+    log_debug "VM ID: $vm_id"
+    log_debug "Hostname: $(hostname)"
+    log_debug "FQDN: $hostname_fqdn"
+    log_debug "Local IP: $local_ip"
     
     # Create CSR configuration
     cat > "$INSTALL_DIR/security/csr.conf" << EOF
@@ -347,30 +354,56 @@ prompt = no
 C = US
 ST = State
 L = City
-O = Organization
-OU = VM Agent
+O = VM Agent Organization
+OU = VM Agent Unit
 CN = $vm_id
 
 [v3_req]
-keyUsage = keyEncipherment, dataEncipherment, digitalSignature
-extendedKeyUsage = serverAuth, clientAuth
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
 subjectAltName = @alt_names
 
 [alt_names]
 DNS.1 = $vm_id
 DNS.2 = $(hostname)
+DNS.3 = $hostname_fqdn
 IP.1 = $local_ip
+IP.2 = 127.0.0.1
 EOF
 
     # Generate CSR
+    log_debug "Generating Certificate Signing Request..."
     openssl req -new -key "$INSTALL_DIR/security/vm_agent.key" \
         -out "$INSTALL_DIR/security/vm_agent.csr" \
         -config "$INSTALL_DIR/security/csr.conf" 2>/dev/null
+    
+    if [[ $? -ne 0 ]]; then
+        log_error "Failed to generate CSR"
+        exit 1
+    fi
+    
+    # Validate CSR
+    log_debug "Validating generated CSR..."
+    if openssl req -in "$INSTALL_DIR/security/vm_agent.csr" -text -noout >/dev/null 2>&1; then
+        log_debug "CSR validation successful"
+        
+        # Show CSR details in debug mode
+        if [[ "$DEBUG" == "true" ]]; then
+            log_debug "CSR Subject:"
+            openssl req -in "$INSTALL_DIR/security/vm_agent.csr" -subject -noout 2>/dev/null | sed 's/^subject=/  /'
+            log_debug "CSR Alternative Names:"
+            openssl req -in "$INSTALL_DIR/security/vm_agent.csr" -text -noout 2>/dev/null | grep -A 5 "Subject Alternative Name" | sed 's/^/  /'
+        fi
+    else
+        log_error "Generated CSR is invalid"
+        exit 1
+    fi
     
     # Set proper permissions
     chmod 600 "$INSTALL_DIR/security/vm_agent.key"
     chmod 644 "$INSTALL_DIR/security/vm_agent.csr"
     chmod 644 "$INSTALL_DIR/security/ca.crt"
+    chmod 644 "$INSTALL_DIR/security/csr.conf"
     
     log_success "VM credentials generated (ID: $vm_id)"
     echo "$vm_id"  # Return the VM ID
@@ -441,7 +474,7 @@ register_agent() {
         log_error "Registration failed. Response:"
         echo "$response" | head -5
         
-        # Additional debugging for JSON errors
+        # Additional debugging for different error types
         if echo "$response" | grep -q "JSON decode error"; then
             log_error "JSON payload validation failed. Checking payload..."
             if echo "$registration_payload" | jq . >/dev/null 2>&1; then
@@ -450,7 +483,60 @@ register_agent() {
                 log_error "Payload JSON is invalid!"
                 echo "$registration_payload" | head -5
             fi
+        elif echo "$response" | grep -q "Failed to sign certificate"; then
+            log_error "Certificate signing failed. Debugging..."
+            
+            # Check if CSR is valid
+            if openssl req -in "$INSTALL_DIR/security/vm_agent.csr" -text -noout >/dev/null 2>&1; then
+                log_info "CSR is structurally valid"
+                
+                # Show CSR details for debugging
+                log_info "CSR Details:"
+                echo "  Subject: $(openssl req -in "$INSTALL_DIR/security/vm_agent.csr" -subject -noout 2>/dev/null | sed 's/^subject=//')"
+                echo "  Key size: $(openssl req -in "$INSTALL_DIR/security/vm_agent.csr" -noout -text 2>/dev/null | grep -o 'Public-Key: ([0-9]* bit)' || echo 'Unknown')"
+                
+                # Check if provisioning token looks valid
+                if [[ ${#PROVISIONING_TOKEN} -lt 10 ]]; then
+                    log_warning "Provisioning token seems too short (${#PROVISIONING_TOKEN} chars)"
+                elif [[ ${#PROVISIONING_TOKEN} -gt 1000 ]]; then
+                    log_warning "Provisioning token seems too long (${#PROVISIONING_TOKEN} chars)"
+                else
+                    log_info "Provisioning token length seems reasonable (${#PROVISIONING_TOKEN} chars)"
+                fi
+                
+                # Check token format (basic validation)
+                if [[ "$PROVISIONING_TOKEN" =~ ^[A-Za-z0-9+/=._-]+$ ]]; then
+                    log_info "Provisioning token format looks valid"
+                else
+                    log_warning "Provisioning token contains unexpected characters"
+                fi
+                
+            else
+                log_error "CSR is structurally invalid!"
+                log_info "CSR file size: $(wc -c < "$INSTALL_DIR/security/vm_agent.csr") bytes"
+            fi
+            
+            # Check if the orchestrator is rejecting the request for other reasons
+            log_info "Possible causes:"
+            echo "  1. Provisioning token expired or invalid"
+            echo "  2. Provisioning token already used"
+            echo "  3. Organization quota exceeded"
+            echo "  4. CSR format not accepted by orchestrator"
+            echo "  5. Network/connectivity issues"
+            
+        elif echo "$response" | grep -q "token"; then
+            log_error "Token-related error detected"
+            log_info "Please check:"
+            echo "  1. Token is not expired (tokens typically expire in 24 hours)"
+            echo "  2. Token hasn't been used already"
+            echo "  3. Token is for the correct organization"
+            
+        else
+            log_error "Unknown registration error"
+            log_info "Full response:"
+            echo "$response"
         fi
+        
         exit 1
     fi
     
