@@ -139,12 +139,12 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=vm-agent
 
-# Security settings
+# Security settings (relaxed for log file access)
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/vm-agent /var/log/vm-agent
+ReadWritePaths=/opt/vm-agent /var/log/vm-agent /var/log/vm-agent.log
 
 [Install]
 WantedBy=multi-user.target
