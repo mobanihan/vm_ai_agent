@@ -16,6 +16,7 @@ from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
 import yaml
 import signal
+import argparse
 
 # Import MCP FastMCP server
 try:
@@ -601,6 +602,16 @@ class VMAgentServer:
 
 async def main() -> None:
     """Main entry point for VM agent server"""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='VM Agent Server')
+    parser.add_argument('--config', '-c', help='Path to configuration file')
+    parser.add_argument('--host', help='Server host (overrides config)')
+    parser.add_argument('--port', type=int, help='Server port (overrides config)')
+    parser.add_argument('--orchestrator-url', help='Orchestrator URL (overrides config)')
+    parser.add_argument('--provision', action='store_true', help='Provision agent on startup')
+    parser.add_argument('--provisioning-token', help='Provisioning token for initial setup')
+    args = parser.parse_args()
+    
     # Configure logging
     logging.basicConfig(
         level=logging.INFO,
@@ -611,9 +622,39 @@ async def main() -> None:
         ]
     )
     
-    # Create and run server
-    server = VMAgentServer()
-    await server.run_forever()
+    # Prepare configuration overrides
+    config_overrides = {}
+    if args.host:
+        config_overrides.setdefault('server', {})['host'] = args.host
+    if args.port:
+        config_overrides.setdefault('server', {})['port'] = args.port
+    if args.orchestrator_url:
+        config_overrides.setdefault('orchestrator', {})['url'] = args.orchestrator_url
+    
+    # Create and configure server
+    try:
+        server = VMAgentServer(
+            config_path=args.config,
+            **config_overrides
+        )
+        
+        # Handle provisioning if requested
+        if args.provision or args.provisioning_token:
+            logger.info("Starting agent provisioning...")
+            success = await server.register_with_orchestrator(args.provisioning_token)
+            if not success:
+                logger.error("Agent provisioning failed")
+                sys.exit(1)
+            logger.info("Agent provisioning completed successfully")
+        
+        # Run the server
+        await server.run_forever()
+        
+    except KeyboardInterrupt:
+        logger.info("Received keyboard interrupt, shutting down...")
+    except Exception as e:
+        logger.error(f"Server startup failed: {e}", exc_info=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

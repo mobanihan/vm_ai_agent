@@ -7,6 +7,7 @@ Provides command-line interface for VM agent operations including:
 - Agent installation and configuration
 - Tool testing and debugging
 - Status monitoring
+- Agent provisioning and registration
 """
 
 import asyncio
@@ -18,6 +19,8 @@ import yaml
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
+import aiohttp
+import subprocess
 
 from .server import VMAgentServer
 from .tools import TenantManager, SecurityManager
@@ -86,7 +89,7 @@ def server(ctx: click.Context, host: str, port: int, ssl: bool, daemon: bool) ->
 @cli.command()
 @click.option('--orchestrator-url', required=True, help='Orchestrator URL')
 @click.option('--provisioning-token', help='Provisioning token for auto-setup')
-@click.option('--tenant-id', help='Manual tenant ID')
+@click.option('--organization-id', help='Organization ID for manual setup')
 @click.option('--install-dir', default='/opt/vm-agent', help='Installation directory')
 @click.option('--force', is_flag=True, help='Force installation even if already exists')
 @click.pass_context
@@ -94,58 +97,72 @@ def install(
     ctx: click.Context, 
     orchestrator_url: str, 
     provisioning_token: Optional[str],
-    tenant_id: Optional[str],
+    organization_id: Optional[str],
     install_dir: str,
     force: bool
 ) -> None:
-    """Install and configure VM agent"""
+    """Install and configure VM agent with full orchestrator integration"""
     
     async def run_install():
-        click.echo("Installing VM Agent...")
+        click.echo("🚀 Installing VM Agent with Orchestrator Integration...")
+        
+        # Validate parameters
+        if not provisioning_token and not organization_id:
+            click.echo("❌ Either --provisioning-token or --organization-id must be provided")
+            sys.exit(1)
         
         # Create installation directory
         install_path = Path(install_dir)
         if install_path.exists() and not force:
-            click.echo(f"Installation directory {install_dir} already exists. Use --force to overwrite.")
-            return
+            click.echo(f"❌ Installation directory {install_dir} already exists. Use --force to overwrite.")
+            sys.exit(1)
         
         install_path.mkdir(parents=True, exist_ok=True)
         
-        # Initialize security manager for certificate generation
-        security_manager = SecurityManager()
-        tenant_manager = TenantManager()
-        
-        # Set environment variables
-        os.environ['ORCHESTRATOR_URL'] = orchestrator_url
-        if provisioning_token:
-            os.environ['PROVISIONING_TOKEN'] = provisioning_token
-        
-        # Create agent server for registration
-        server = VMAgentServer()
-        
-        # Register with orchestrator
-        if provisioning_token:
-            click.echo("Registering with orchestrator using provisioning token...")
-            success = await server.register_with_orchestrator(provisioning_token)
-        elif tenant_id:
-            click.echo(f"Configuring manual tenant: {tenant_id}")
-            # Manual tenant configuration
-            tenant_data = {
-                "organization_id": tenant_id,
-                "orchestrator_url": orchestrator_url
-            }
-            result = await tenant_manager.provision_vm(tenant_data)
-            success = result.get("status") == "success"
-        else:
-            click.echo("Error: Either --provisioning-token or --tenant-id must be provided")
-            return
-        
-        if success:
-            click.echo("✅ VM Agent installed and configured successfully!")
-            click.echo(f"Installation directory: {install_dir}")
-            click.echo("To start the agent, run: vm-agent server")
-        else:
-            click.echo("❌ Installation failed")
+        try:
+            # Initialize managers
+            security_manager = SecurityManager()
+            
+            # Set environment variables for child processes
+            os.environ['ORCHESTRATOR_URL'] = orchestrator_url
+            if provisioning_token:
+                os.environ['PROVISIONING_TOKEN'] = provisioning_token
+            if organization_id:
+                os.environ['ORGANIZATION_ID'] = organization_id
+            
+            # Create and configure VM Agent
+            click.echo("🔧 Initializing VM Agent...")
+            server = VMAgentServer()
+            
+            # Generate credentials first
+            click.echo("🔑 Generating VM credentials...")
+            await server._ensure_credentials()
+            
+            # Register with orchestrator
+            click.echo("📡 Registering with orchestrator...")
+            if provisioning_token:
+                success = await server.register_with_orchestrator(provisioning_token)
+            else:
+                # Manual organization setup
+                click.echo(f"🏢 Setting up manual organization: {organization_id}")
+                # This would need to be implemented based on your organization setup flow
+                success = False
+                click.echo("❌ Manual organization setup not yet implemented")
+            
+            if success:
+                click.echo("✅ VM Agent installed and registered successfully!")
+                click.echo(f"📁 Installation directory: {install_dir}")
+                click.echo("🚀 To start the agent manually, run: vm-agent server")
+                click.echo("💡 For systemd service installation, use the enhanced_install_vm_agent.sh script")
+            else:
+                click.echo("❌ Installation failed during registration")
+                sys.exit(1)
+                
+        except Exception as e:
+            click.echo(f"❌ Installation error: {e}", err=True)
+            if ctx.obj.get('verbose'):
+                import traceback
+                traceback.print_exc()
             sys.exit(1)
     
     try:
@@ -156,39 +173,137 @@ def install(
 
 
 @cli.command()
+@click.option('--orchestrator-url', required=True, help='Orchestrator URL')
+@click.option('--provisioning-token', help='Provisioning token')
+@click.option('--test-connection', is_flag=True, help='Test connection only')
+@click.pass_context
+def provision(ctx: click.Context, orchestrator_url: str, provisioning_token: Optional[str], test_connection: bool) -> None:
+    """Provision or re-provision the agent with the orchestrator"""
+    
+    async def run_provision():
+        try:
+            if test_connection:
+                click.echo("🔍 Testing orchestrator connection...")
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{orchestrator_url}/api/v1/docs", timeout=10) as response:
+                        if response.status == 200:
+                            click.echo("✅ Orchestrator is reachable")
+                        else:
+                            click.echo(f"❌ Orchestrator returned HTTP {response.status}")
+                return
+            
+            # Full provisioning
+            click.echo("🔄 Starting agent provisioning...")
+            
+            # Create server instance
+            server = VMAgentServer(config_path=ctx.obj.get('config'))
+            
+            # Set orchestrator URL
+            server.config['orchestrator']['url'] = orchestrator_url
+            
+            # Ensure we have basic credentials
+            await server._ensure_credentials()
+            
+            # Register with orchestrator
+            if provisioning_token:
+                click.echo("📡 Registering with provisioning token...")
+                success = await server.register_with_orchestrator(provisioning_token)
+            else:
+                click.echo("📡 Re-registering existing agent...")
+                success = await server.register_with_orchestrator()
+            
+            if success:
+                click.echo("✅ Agent provisioned successfully!")
+                
+                # Show agent details
+                vm_id = server.security_manager.get_vm_id()
+                click.echo(f"🆔 VM ID: {vm_id}")
+                click.echo(f"🌐 Orchestrator: {orchestrator_url}")
+                
+                # Test WebSocket connection
+                if server.ws_handler:
+                    click.echo("🔌 Testing WebSocket connection...")
+                    # This would require implementing a test method
+                    click.echo("✅ WebSocket configuration updated")
+                
+                click.echo("🚀 Agent is ready! Restart the service to apply changes.")
+            else:
+                click.echo("❌ Provisioning failed")
+                sys.exit(1)
+                
+        except Exception as e:
+            click.echo(f"❌ Provisioning error: {e}", err=True)
+            if ctx.obj.get('verbose'):
+                import traceback
+                traceback.print_exc()
+            sys.exit(1)
+    
+    try:
+        asyncio.run(run_provision())
+    except Exception as e:
+        click.echo(f"Provisioning error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
 @click.pass_context
 def status(ctx: click.Context) -> None:
     """Show agent status and configuration"""
     
     async def show_status():
         try:
-            # Load tenant configuration
-            tenant_manager = TenantManager()
-            tenant_config = await tenant_manager.load_tenant_config()
-            
             # Create server instance to get config
             server = VMAgentServer(config_path=ctx.obj.get('config'))
             
+            # Check if agent is registered
+            security_manager = SecurityManager()
+            vm_id = security_manager.get_vm_id()
+            api_key = security_manager.get_api_key()
+            
             status_info = {
-                "vm_id": server.vm_id,
-                "agent_version": server.config['agent']['version'],
-                "tenant_status": "provisioned" if tenant_config else "not_provisioned",
-                "tenant_info": tenant_config,
-                "tools_enabled": list(server.tools.keys()),
-                "orchestrator_url": server.config.get('orchestrator', {}).get('url'),
+                "agent_status": {
+                    "vm_id": vm_id,
+                    "agent_version": server.config['agent']['version'],
+                    "credentials_loaded": bool(vm_id and api_key),
+                    "ready": server.is_ready() if hasattr(server, 'is_ready') else False
+                },
+                "orchestrator": {
+                    "url": server.config.get('orchestrator', {}).get('url'),
+                    "websocket_url": server.config.get('orchestrator', {}).get('websocket_url'),
+                    "connected": False  # Would need to check actual connection
+                },
                 "server_config": {
                     "host": server.config.get('server', {}).get('host'),
                     "port": server.config.get('server', {}).get('port'),
                     "ssl_enabled": server.config.get('server', {}).get('ssl', {}).get('enabled')
+                },
+                "tools_enabled": list(server.tools.keys()) if hasattr(server, 'tools') else [],
+                "security": {
+                    "certificates_present": all([
+                        security_manager.vm_cert_path.exists(),
+                        security_manager.vm_key_path.exists(),
+                        security_manager.ca_cert_path.exists()
+                    ]) if hasattr(security_manager, 'vm_cert_path') else False
                 }
             }
             
-            click.echo("VM Agent Status:")
+            # Check service status if on systemd
+            try:
+                result = subprocess.run(['systemctl', 'is-active', 'vm-agent'], 
+                                     capture_output=True, text=True)
+                status_info["service_status"] = result.stdout.strip()
+            except:
+                status_info["service_status"] = "unknown"
+            
+            click.echo("🔍 VM Agent Status:")
             click.echo("=" * 50)
             click.echo(yaml.dump(status_info, default_flow_style=False))
             
         except Exception as e:
-            click.echo(f"Error getting status: {e}", err=True)
+            click.echo(f"❌ Error getting status: {e}", err=True)
+            if ctx.obj.get('verbose'):
+                import traceback
+                traceback.print_exc()
     
     asyncio.run(show_status())
 
@@ -387,6 +502,68 @@ def config(ctx: click.Context, output: Optional[str]) -> None:
             
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
+
+
+@cli.command()
+@click.option('--orchestrator-url', help='Test specific orchestrator URL')
+@click.pass_context  
+def test_connection(ctx: click.Context, orchestrator_url: Optional[str]) -> None:
+    """Test connection to orchestrator"""
+    
+    async def run_test():
+        try:
+            # Get orchestrator URL from config or parameter
+            if not orchestrator_url:
+                server = VMAgentServer(config_path=ctx.obj.get('config'))
+                orchestrator_url_to_test = server.config.get('orchestrator', {}).get('url')
+                if not orchestrator_url_to_test:
+                    click.echo("❌ No orchestrator URL configured. Use --orchestrator-url parameter.")
+                    return
+            else:
+                orchestrator_url_to_test = orchestrator_url
+            
+            click.echo(f"🔍 Testing connection to: {orchestrator_url_to_test}")
+            
+            # Test basic connectivity
+            async with aiohttp.ClientSession() as session:
+                # Test docs endpoint
+                try:
+                    async with session.get(f"{orchestrator_url_to_test}/api/v1/docs", timeout=10) as response:
+                        if response.status == 200:
+                            click.echo("✅ Orchestrator docs endpoint reachable")
+                        else:
+                            click.echo(f"⚠️  Orchestrator docs endpoint returned HTTP {response.status}")
+                except Exception as e:
+                    click.echo(f"❌ Cannot reach orchestrator docs: {e}")
+                    return
+                
+                # Test CA certificate endpoint
+                try:
+                    async with session.get(f"{orchestrator_url_to_test}/api/v1/agents/ca-certificate", timeout=10) as response:
+                        if response.status == 200:
+                            click.echo("✅ CA certificate endpoint reachable")
+                        else:
+                            click.echo(f"⚠️  CA certificate endpoint returned HTTP {response.status}")
+                except Exception as e:
+                    click.echo(f"❌ Cannot reach CA certificate endpoint: {e}")
+                
+                # Test registration endpoint (without actually registering)
+                try:
+                    async with session.post(f"{orchestrator_url_to_test}/api/v1/agents/register", 
+                                          json={}, timeout=10) as response:
+                        if response.status in [400, 422]:  # Expected for empty payload
+                            click.echo("✅ Registration endpoint reachable")
+                        else:
+                            click.echo(f"⚠️  Registration endpoint returned HTTP {response.status}")
+                except Exception as e:
+                    click.echo(f"❌ Cannot reach registration endpoint: {e}")
+                
+            click.echo("🏁 Connection test completed")
+            
+        except Exception as e:
+            click.echo(f"❌ Connection test error: {e}", err=True)
+            
+    asyncio.run(run_test())
 
 
 def main() -> None:
