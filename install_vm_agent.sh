@@ -1,47 +1,58 @@
 #!/bin/bash
-# VM Agent Installation Script - PEP 668 Compatible
+# Fix VM Agent Installation with Proper Permissions
 
 set -e
 
-echo "🚀 VM Agent Installation (PEP 668 Compatible)"
+echo "🔧 Fixing VM Agent installation..."
 
-# Check if running as root
-if [ "$EUID" -ne 0 ]; then 
-    echo "❌ Please run as root (use sudo)"
+# Stop the service if running
+echo "⏹️  Stopping service..."
+sudo systemctl stop vm-agent 2>/dev/null || true
+
+# Create proper directory structure
+echo "📁 Creating directory structure..."
+sudo mkdir -p /opt/vm-agent/{src,config,security,tenant,logs}
+sudo mkdir -p /var/log/vm-agent
+
+# Copy source code to proper location
+echo "📋 Copying source code..."
+if [ -d "/root/vm_ai_agent" ]; then
+    sudo cp -r /root/vm_ai_agent/* /opt/vm-agent/src/
+else
+    echo "❌ Source directory /root/vm_ai_agent not found!"
     exit 1
 fi
 
-# Get orchestrator URL
-ORCHESTRATOR_URL="${1:-https://your-orchestrator.com}"
-echo "📡 Orchestrator URL: $ORCHESTRATOR_URL"
+# Create user if doesn't exist
+echo "👤 Ensuring vm-agent user exists..."
+sudo useradd --system --home-dir /opt/vm-agent --no-create-home --shell /bin/false vm-agent 2>/dev/null || true
 
-# Create dedicated virtual environment
-echo "🔧 Creating dedicated virtual environment..."
-python3 -m venv /opt/vm-agent-venv
+# Set permissions on source
+echo "🔒 Setting permissions..."
+sudo chown -R vm-agent:vm-agent /opt/vm-agent
+sudo chmod -R 755 /opt/vm-agent/src
+sudo chmod 700 /opt/vm-agent/security
+sudo chmod 755 /opt/vm-agent
 
-# Install dependencies
+# Recreate virtual environment with correct ownership
+echo "🐍 Recreating virtual environment..."
+sudo rm -rf /opt/vm-agent-venv
+sudo -u vm-agent python3 -m venv /opt/vm-agent-venv
+
+# Install dependencies as vm-agent user
 echo "📦 Installing dependencies..."
-/opt/vm-agent-venv/bin/pip install --upgrade pip
-/opt/vm-agent-venv/bin/pip install aiofiles aiohttp aiohttp-cors PyYAML cryptography psutil websockets asyncio-mqtt pyjwt paramiko mcp click
+sudo -u vm-agent /opt/vm-agent-venv/bin/pip install --upgrade pip
+sudo -u vm-agent /opt/vm-agent-venv/bin/pip install aiofiles aiohttp aiohttp-cors PyYAML cryptography psutil websockets asyncio-mqtt pyjwt paramiko mcp click
 
-# Install vm_agent from current directory
-if [ -d "/root/vm_ai_agent" ]; then
-    echo "📦 Installing vm_agent package..."
-    /opt/vm-agent-venv/bin/pip install -e /root/vm_ai_agent
-fi
+# Install the vm_agent package
+echo "📦 Installing vm_agent package..."
+cd /opt/vm-agent/src
+sudo -u vm-agent /opt/vm-agent-venv/bin/pip install .
 
-# Create user
-echo "👤 Creating vm-agent user..."
-useradd --system --home-dir /opt/vm-agent --no-create-home --shell /bin/false vm-agent 2>/dev/null || true
-
-# Create directories
-echo "📁 Creating directories..."
-mkdir -p /opt/vm-agent/{security,tenant,logs,config}
-mkdir -p /var/log/vm-agent
-
-# Create configuration
-echo "⚙️ Creating configuration..."
-cat > /opt/vm-agent/config/agent_config.yaml << EOF
+# Create configuration if doesn't exist
+if [ ! -f "/opt/vm-agent/config/agent_config.yaml" ]; then
+    echo "⚙️  Creating configuration..."
+    sudo -u vm-agent tee /opt/vm-agent/config/agent_config.yaml > /dev/null << 'EOF'
 agent:
   id: vm-agent-$(hostname)
   name: "VM Agent"
@@ -56,7 +67,7 @@ server:
     key_file: "/opt/vm-agent/security/server.key"
 
 orchestrator:
-  url: "$ORCHESTRATOR_URL"
+  url: "${ORCHESTRATOR_URL}"
   heartbeat_interval: 30
   command_poll_interval: 5
 
@@ -79,10 +90,11 @@ tools:
     enabled: true
     max_lines: 10000
 EOF
+fi
 
-# Create systemd service
-echo "🔧 Creating systemd service..."
-cat > /etc/systemd/system/vm-agent.service << 'EOF'
+# Update systemd service
+echo "🔧 Updating systemd service..."
+sudo tee /etc/systemd/system/vm-agent.service > /dev/null << 'EOF'
 [Unit]
 Description=VM Agent for AI Infrastructure Management
 After=network.target
@@ -93,8 +105,8 @@ Type=simple
 User=vm-agent
 Group=vm-agent
 WorkingDirectory=/opt/vm-agent
-Environment=PYTHONPATH=/opt/vm-agent
-Environment=ORCHESTRATOR_URL=$ORCHESTRATOR_URL
+Environment=PYTHONPATH=/opt/vm-agent/src
+Environment=ORCHESTRATOR_URL=${ORCHESTRATOR_URL:-https://80a6-188-123-163-160.ngrok-free.app}
 ExecStart=/opt/vm-agent-venv/bin/python -m vm_agent.server
 Restart=always
 RestartSec=10
@@ -113,37 +125,30 @@ ReadWritePaths=/opt/vm-agent /var/log/vm-agent
 WantedBy=multi-user.target
 EOF
 
-# Set environment variable in service
-sed -i "s|\$ORCHESTRATOR_URL|$ORCHESTRATOR_URL|g" /etc/systemd/system/vm-agent.service
+# Final permission check
+echo "🔍 Final permission check..."
+sudo chown -R vm-agent:vm-agent /opt/vm-agent
+sudo chown -R vm-agent:vm-agent /opt/vm-agent-venv
+sudo chown -R vm-agent:vm-agent /var/log/vm-agent
 
-# Set permissions
-echo "🔒 Setting permissions..."
-chown -R vm-agent:vm-agent /opt/vm-agent
-chown -R vm-agent:vm-agent /opt/vm-agent-venv
-chmod 700 /opt/vm-agent/security
-chmod 600 /opt/vm-agent/config/agent_config.yaml
-
-# Enable and start service
+# Reload and start service
 echo "🚀 Starting service..."
-systemctl daemon-reload
-systemctl enable vm-agent
-systemctl start vm-agent
+sudo systemctl daemon-reload
+sudo systemctl enable vm-agent
+sudo systemctl start vm-agent
 
-# Wait a moment for service to start
+# Wait for service to start
 sleep 3
 
 # Check status
-if systemctl is-active --quiet vm-agent; then
-    echo "✅ VM Agent installed and running successfully!"
+if sudo systemctl is-active --quiet vm-agent; then
+    echo "✅ VM Agent is running successfully!"
     echo ""
-    echo "📋 Useful commands:"
+    echo "📋 Check status with:"
     echo "  sudo systemctl status vm-agent"
     echo "  sudo journalctl -u vm-agent -f"
     echo "  curl http://localhost:8080/health"
 else
-    echo "⚠️ Service may not have started properly. Check logs:"
-    echo "  sudo journalctl -u vm-agent -n 50"
+    echo "⚠️  Service failed to start. Checking logs..."
+    sudo journalctl -u vm-agent -n 20 --no-pager
 fi
-
-echo ""
-echo "🎉 Installation complete!"
