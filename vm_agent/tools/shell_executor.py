@@ -24,7 +24,7 @@ class ShellExecutor:
                 return False
         return True
     
-    async def execute(self, command: str, **kwargs) -> Dict[str, Any]:
+    async def execute_command(self, command: str, timeout: int = 300, **kwargs) -> Dict[str, Any]:
         """Execute shell command with security checks"""
         
         # Security check
@@ -32,7 +32,7 @@ class ShellExecutor:
             raise ValueError(f"Command blocked by security policy: {command}")
         
         # Parse arguments
-        timeout = min(kwargs.get('timeout', self.timeout_default), self.timeout_max)
+        timeout = min(timeout, self.timeout_max)
         working_dir = kwargs.get('working_dir', os.getcwd())
         env_vars = kwargs.get('env_vars', {})
         capture_output = kwargs.get('capture_output', True)
@@ -53,7 +53,6 @@ class ShellExecutor:
         env.update(env_vars)
         
         logger.info(f"Executing command: {command} (timeout: {timeout}s, cwd: {working_dir})")
-        logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
         
         try:
             # Create subprocess with explicit shell
@@ -96,7 +95,6 @@ class ShellExecutor:
                 "stdout": stdout.decode('utf-8', errors='replace') if stdout else "",
                 "stderr": stderr.decode('utf-8', errors='replace') if stderr else "",
                 "working_dir": working_dir,
-                "execution_time": None,  # Could add timing
                 "timestamp": datetime.now().isoformat(),
                 "success": process.returncode == 0
             }
@@ -122,6 +120,15 @@ class ShellExecutor:
                 "error": str(e)
             }
     
+    async def get_command_history(self) -> Dict[str, Any]:
+        """Get command execution history"""
+        # This would typically read from a log file or database
+        return {
+            "history": [],
+            "total_commands": 0,
+            "timestamp": datetime.now().isoformat()
+        }
+
     async def execute_script(self, script_content: str, interpreter: str = "bash") -> Dict[str, Any]:
         """Execute a script from string content"""
         import tempfile
@@ -137,7 +144,7 @@ class ShellExecutor:
             
             # Execute script
             command = f"{interpreter} {script_path}"
-            result = await self.execute(command)
+            result = await self.execute_command(command)
             result["script_content"] = script_content
             result["interpreter"] = interpreter
             

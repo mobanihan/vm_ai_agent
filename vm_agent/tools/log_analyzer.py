@@ -10,30 +10,106 @@ logger = logging.getLogger(__name__)
 class LogAnalyzer:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.max_lines_default = config.get('max_lines_default', 1000)
-        self.max_lines_max = config.get('max_lines_max', 10000)
+        self.max_lines = config.get('max_lines', 10000)
         
         # Common log patterns
-        self.patterns = {
-            'apache_common': re.compile(
-                r'(?P<ip>\S+) \S+ \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<protocol>\S+)" (?P<status>\d+) (?P<size>\S+)'
-            ),
-            'apache_combined': re.compile(
-                r'(?P<ip>\S+) \S+ \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<protocol>\S+)" (?P<status>\d+) (?P<size>\S+) "(?P<referer>[^"]*)" "(?P<user_agent>[^"]*)"'
-            ),
-            'nginx': re.compile(
-                r'(?P<ip>\S+) - \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<protocol>\S+)" (?P<status>\d+) (?P<size>\d+) "(?P<referer>[^"]*)" "(?P<user_agent>[^"]*)"'
-            ),
-            'syslog': re.compile(
-                r'(?P<timestamp>\w+\s+\d+\s+\d+:\d+:\d+) (?P<hostname>\S+) (?P<process>\S+)(?:\[(?P<pid>\d+)\])?: (?P<message>.*)'
-            ),
-            'error': re.compile(r'error|fail|exception|critical', re.IGNORECASE),
-            'warning': re.compile(r'warn|warning|alert', re.IGNORECASE),
-            'timestamp_iso': re.compile(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}'),
-            'timestamp_common': re.compile(r'\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2}'),
-            'ip_address': re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
-        }
+        self.error_patterns = [
+            r'ERROR',
+            r'FATAL',
+            r'CRITICAL',
+            r'Exception',
+            r'Traceback',
+            r'failed',
+            r'error',
+        ]
+        
+        self.warning_patterns = [
+            r'WARNING',
+            r'WARN',
+            r'deprecated',
+        ]
     
+    async def analyze_log_file(self, log_path: str, lines: int = 100) -> Dict[str, Any]:
+        """Analyze log file for patterns and errors"""
+        try:
+            if not os.path.exists(log_path):
+                return {
+                    "success": False,
+                    "error": f"Log file not found: {log_path}",
+                    "timestamp": datetime.now().isoformat()
+                }
+            
+            lines = min(lines, self.max_lines)
+            
+            # Read last N lines
+            with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                all_lines = f.readlines()
+                recent_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+            
+            # Analyze patterns
+            errors = []
+            warnings = []
+            info_lines = []
+            
+            for i, line in enumerate(recent_lines):
+                line_num = len(all_lines) - len(recent_lines) + i + 1
+                
+                # Check for errors
+                for pattern in self.error_patterns:
+                    if re.search(pattern, line, re.IGNORECASE):
+                        errors.append({
+                            "line_number": line_num,
+                            "content": line.strip(),
+                            "pattern": pattern
+                        })
+                        break
+                
+                # Check for warnings
+                for pattern in self.warning_patterns:
+                    if re.search(pattern, line, re.IGNORECASE):
+                        warnings.append({
+                            "line_number": line_num,
+                            "content": line.strip(),
+                            "pattern": pattern
+                        })
+                        break
+                
+                # Collect info lines (non-error, non-warning)
+                if not any(re.search(p, line, re.IGNORECASE) for p in self.error_patterns + self.warning_patterns):
+                    info_lines.append({
+                        "line_number": line_num,
+                        "content": line.strip()
+                    })
+            
+            # File stats
+            file_stats = os.stat(log_path)
+            
+            return {
+                "success": True,
+                "log_path": log_path,
+                "file_size": file_stats.st_size,
+                "total_lines": len(all_lines),
+                "analyzed_lines": len(recent_lines),
+                "errors": errors[-10:],  # Last 10 errors
+                "warnings": warnings[-10:],  # Last 10 warnings
+                "recent_entries": recent_lines[-5:],  # Last 5 lines
+                "summary": {
+                    "error_count": len(errors),
+                    "warning_count": len(warnings),
+                    "info_count": len(info_lines)
+                },
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to analyze log file {log_path}: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "log_path": log_path,
+                "timestamp": datetime.now().isoformat()
+            }
+
     async def analyze_log(self, log_path: str, **kwargs) -> Dict[str, Any]:
         """Analyze log file with various options"""
         
@@ -42,7 +118,7 @@ class LogAnalyzer:
         
         # Parse arguments
         pattern = kwargs.get('pattern')
-        lines_to_read = min(kwargs.get('lines', self.max_lines_default), self.max_lines_max)
+        lines_to_read = min(kwargs.get('lines', self.max_lines), self.max_lines)
         time_range = kwargs.get('time_range')  # e.g., "1h", "24h", "7d"
         log_format = kwargs.get('format', 'auto')  # auto, apache, nginx, syslog
         include_stats = kwargs.get('include_stats', True)

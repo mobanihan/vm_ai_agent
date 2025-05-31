@@ -1,0 +1,2 @@
+# This file indicates that the vm_agent package supports type hints
+# as defined in PEP 561 

@@ -1,28 +1,24 @@
-# MCP Core
+# Core dependencies
+aiohttp>=3.8.0
+aiohttp-cors>=0.7.0
+pyyaml>=6.0
+cryptography>=3.4.8
+psutil>=5.8.0
+websockets>=10.0
+asyncio-mqtt>=0.11.0
+pyjwt>=2.4.0
+paramiko>=2.11.0
 mcp>=1.0.0
+click>=8.0.0
 
-# Web server
-aiohttp>=3.9.0
-aiofiles>=23.1.0
+# Optional monitoring dependencies
+prometheus-client>=0.14.0
 
-# System monitoring
-psutil>=5.9.0
-netifaces>=0.11.0
-
-# Log analysis
-python-dateutil>=2.8.0
-regex>=2023.6.3
-
-# Configuration
-PyYAML>=6.0
-python-dotenv>=1.0.0
-
-# Utilities
-asyncio-throttle>=1.0.0
-tenacity>=8.2.0
-
-# Development
-pytest>=7.4.0
+# Development dependencies
+pytest>=7.0.0
 pytest-asyncio>=0.21.0
-black>=23.7.0
-aiohttp-cors
+pytest-cov>=4.0.0
+black>=22.0.0
+flake8>=5.0.0
+mypy>=1.0.0
+pre-commit>=2.20.0 

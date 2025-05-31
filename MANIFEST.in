@@ -1,0 +1,26 @@
+# Include documentation
+include README.md
+include LICENSE
+include requirements.txt
+include CHANGELOG.md
+
+# Include configuration files
+recursive-include vm_agent/config *.yaml *.yml
+recursive-include vm_agent/systemd *.service
+recursive-include vm_agent/scripts *.sh
+recursive-include vm_agent/templates *.j2
+
+# Include package data
+include vm_agent/py.typed
+
+# Exclude unnecessary files
+exclude .gitignore
+exclude .pre-commit-config.yaml
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+recursive-exclude * .DS_Store
+recursive-exclude * .pytest_cache
+recursive-exclude * *.egg-info
+recursive-exclude tests *
+recursive-exclude .github *
+recursive-exclude docs * 

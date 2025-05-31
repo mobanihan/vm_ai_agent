@@ -1,0 +1,458 @@
+import asyncio
+import json
+import logging
+from typing import Dict, Any, Optional, Callable
+from datetime import datetime
+import aiohttp
+from aiohttp import web, WSMsgType
+import ssl
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+class CommandStatus(Enum):
+    PENDING = "pending"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+class MessageType(Enum):
+    # From Orchestrator to Agent
+    COMMAND = "command"
+    PING = "ping"
+    CONFIG_UPDATE = "config_update"
+    CERTIFICATE_UPDATE = "certificate_update"
+    
+    # From Agent to Orchestrator
+    COMMAND_RESULT = "command_result"
+    PONG = "pong"
+    HEARTBEAT = "heartbeat"
+    METRICS = "metrics"
+    EVENT = "event"
+    STREAM_OUTPUT = "stream_output"
+
+class WebSocketCommandHandler:
+    """Handles bidirectional WebSocket communication with orchestrator"""
+    
+    def __init__(self, vm_agent, security_manager, orchestrator_url: str):
+        self.vm_agent = vm_agent
+        self.security_manager = security_manager
+        self.orchestrator_url = orchestrator_url.replace("https://", "wss://").replace("http://", "ws://")
+        
+        self._websocket = None
+        self._running = False
+        self._command_handlers = {}
+        self._active_commands = {}
+        self._reconnect_delay = 5
+        self._max_reconnect_delay = 300
+        
+        # Register default command handlers
+        self._register_default_handlers()
+    
+    def _register_default_handlers(self):
+        """Register built-in command handlers"""
+        
+        @self.register_handler("execute_tool")
+        async def handle_execute_tool(command: Dict[str, Any]) -> Dict[str, Any]:
+            """Execute MCP tool"""
+            tool_name = command.get("tool")
+            arguments = command.get("arguments", {})
+            
+            # Map to actual tool methods
+            if tool_name == "execute_shell" and 'shell' in self.vm_agent.tools:
+                return await self.vm_agent.tools['shell'].execute(**arguments)
+            elif tool_name == "read_file" and 'file' in self.vm_agent.tools:
+                return await self.vm_agent.tools['file'].read_file(**arguments)
+            # ... other tool mappings
+            else:
+                raise ValueError(f"Unknown tool: {tool_name}")
+        
+        @self.register_handler("update_config")
+        async def handle_update_config(command: Dict[str, Any]) -> Dict[str, Any]:
+            """Update agent configuration"""
+            config_section = command.get("section")
+            config_data = command.get("data")
+            
+            # Update configuration
+            if config_section in self.vm_agent.config:
+                self.vm_agent.config[config_section].update(config_data)
+                return {"status": "success", "message": f"Updated {config_section} configuration"}
+            else:
+                raise ValueError(f"Unknown configuration section: {config_section}")
+    
+    def register_handler(self, command_type: str):
+        """Decorator to register command handlers"""
+        def decorator(func: Callable):
+            self._command_handlers[command_type] = func
+            return func
+        return decorator
+    
+    async def connect(self):
+        """Establish WebSocket connection to orchestrator"""
+        self._running = True
+        
+        while self._running:
+            try:
+                # Create SSL context
+                ssl_context = self.security_manager.get_ssl_context()
+                
+                # Connect with mTLS
+                session = aiohttp.ClientSession()
+                ws_url = f"{self.orchestrator_url}/api/v1/agents/{self.security_manager._vm_id}/ws"
+                
+                headers = {
+                    "X-VM-ID": self.security_manager._vm_id,
+                    "X-API-Key": self.security_manager._api_key,
+                    "X-Agent-Version": self.vm_agent.config['agent']['version']
+                }
+                
+                logger.info(f"Connecting to orchestrator WebSocket: {ws_url}")
+                
+                self._websocket = await session.ws_connect(
+                    ws_url,
+                    ssl=ssl_context,
+                    headers=headers,
+                    heartbeat=30
+                )
+                
+                logger.info("WebSocket connection established")
+                
+                # Reset reconnect delay on successful connection
+                self._reconnect_delay = 5
+                
+                # Send initial heartbeat
+                await self._send_heartbeat()
+                
+                # Start background tasks
+                tasks = [
+                    asyncio.create_task(self._handle_messages()),
+                    asyncio.create_task(self._heartbeat_loop()),
+                    asyncio.create_task(self._metrics_loop())
+                ]
+                
+                # Wait for any task to complete (which means error/disconnect)
+                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                
+                # Cancel remaining tasks
+                for task in pending:
+                    task.cancel()
+                
+                # Clean up
+                await session.close()
+                
+            except Exception as e:
+                logger.error(f"WebSocket connection error: {e}")
+                
+                if self._running:
+                    logger.info(f"Reconnecting in {self._reconnect_delay} seconds...")
+                    await asyncio.sleep(self._reconnect_delay)
+                    
+                    # Exponential backoff
+                    self._reconnect_delay = min(self._reconnect_delay * 2, self._max_reconnect_delay)
+    
+    async def _handle_messages(self):
+        """Handle incoming WebSocket messages"""
+        try:
+            async for msg in self._websocket:
+                if msg.type == WSMsgType.TEXT:
+                    await self._process_message(json.loads(msg.data))
+                elif msg.type == WSMsgType.ERROR:
+                    logger.error(f"WebSocket error: {self._websocket.exception()}")
+                    break
+                elif msg.type == WSMsgType.CLOSED:
+                    logger.info("WebSocket closed by orchestrator")
+                    break
+        except Exception as e:
+            logger.error(f"Error handling messages: {e}")
+    
+    async def _process_message(self, message: Dict[str, Any]):
+        """Process incoming message from orchestrator"""
+        try:
+            msg_type = MessageType(message.get("type"))
+            msg_id = message.get("id")
+            
+            logger.debug(f"Received message: {msg_type.value} (ID: {msg_id})")
+            
+            if msg_type == MessageType.COMMAND:
+                await self._handle_command(message)
+            elif msg_type == MessageType.PING:
+                await self._send_message({
+                    "type": MessageType.PONG.value,
+                    "id": msg_id,
+                    "timestamp": datetime.utcnow().isoformat()
+                })
+            elif msg_type == MessageType.CONFIG_UPDATE:
+                await self._handle_config_update(message)
+            elif msg_type == MessageType.CERTIFICATE_UPDATE:
+                await self._handle_certificate_update(message)
+                
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
+            
+            if message.get("id"):
+                await self._send_error(message["id"], str(e))
+    
+    async def _handle_command(self, message: Dict[str, Any]):
+        """Handle command execution request"""
+        command_id = message.get("id")
+        command_type = message.get("command_type")
+        command_data = message.get("data", {})
+        stream_output = message.get("stream_output", False)
+        
+        if not command_type or not command_id:
+            logger.error("Invalid command message: missing type or id")
+            return
+        
+        # Store active command
+        self._active_commands[command_id] = {
+            "status": CommandStatus.EXECUTING,
+            "start_time": datetime.utcnow(),
+            "type": command_type
+        }
+        
+        # Send acknowledgment
+        await self._send_message({
+            "type": MessageType.COMMAND_RESULT.value,
+            "id": command_id,
+            "status": CommandStatus.EXECUTING.value,
+            "message": f"Executing command: {command_type}"
+        })
+        
+        try:
+            # Get handler
+            handler = self._command_handlers.get(command_type)
+            if not handler:
+                raise ValueError(f"No handler registered for command type: {command_type}")
+            
+            # Execute command
+            if stream_output and command_type == "execute_tool":
+                # Stream output for shell commands
+                await self._execute_streaming_command(command_id, handler, command_data)
+            else:
+                # Regular execution
+                result = await handler(command_data)
+                
+                # Send result
+                await self._send_message({
+                    "type": MessageType.COMMAND_RESULT.value,
+                    "id": command_id,
+                    "status": CommandStatus.COMPLETED.value,
+                    "result": result,
+                    "execution_time": (datetime.utcnow() - self._active_commands[command_id]["start_time"]).total_seconds()
+                })
+            
+            # Update status
+            self._active_commands[command_id]["status"] = CommandStatus.COMPLETED
+            
+        except Exception as e:
+            logger.error(f"Command execution failed: {e}")
+            
+            # Send error
+            await self._send_message({
+                "type": MessageType.COMMAND_RESULT.value,
+                "id": command_id,
+                "status": CommandStatus.FAILED.value,
+                "error": str(e),
+                "execution_time": (datetime.utcnow() - self._active_commands[command_id]["start_time"]).total_seconds()
+            })
+            
+            # Update status
+            self._active_commands[command_id]["status"] = CommandStatus.FAILED
+        
+        finally:
+            # Clean up old commands
+            await self._cleanup_commands()
+    
+    async def _execute_streaming_command(self, command_id: str, handler: Callable, command_data: Dict[str, Any]):
+        """Execute command with streaming output"""
+        # This is a simplified version - in practice, you'd modify shell_executor to support streaming
+        
+        # For shell commands, we can capture output in chunks
+        if command_data.get("tool") == "execute_shell":
+            command = command_data.get("arguments", {}).get("command")
+            
+            # Create subprocess for streaming
+            process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            # Stream stdout
+            async def stream_reader(stream, stream_type):
+                async for line in stream:
+                    await self._send_message({
+                        "type": MessageType.STREAM_OUTPUT.value,
+                        "id": command_id,
+                        "stream": stream_type,
+                        "data": line.decode('utf-8', errors='replace'),
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+            
+            # Start streaming tasks
+            await asyncio.gather(
+                stream_reader(process.stdout, "stdout"),
+                stream_reader(process.stderr, "stderr")
+            )
+            
+            # Wait for completion
+            return_code = await process.wait()
+            
+            # Send final result
+            await self._send_message({
+                "type": MessageType.COMMAND_RESULT.value,
+                "id": command_id,
+                "status": CommandStatus.COMPLETED.value if return_code == 0 else CommandStatus.FAILED.value,
+                "result": {"return_code": return_code},
+                "execution_time": (datetime.utcnow() - self._active_commands[command_id]["start_time"]).total_seconds()
+            })
+    
+    async def _handle_config_update(self, message: Dict[str, Any]):
+        """Handle configuration update from orchestrator"""
+        config_data = message.get("data", {})
+        
+        try:
+            # Update configuration
+            for section, values in config_data.items():
+                if section in self.vm_agent.config:
+                    self.vm_agent.config[section].update(values)
+            
+            # Save configuration
+            # ... implement config saving logic
+            
+            logger.info("Configuration updated successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to update configuration: {e}")
+    
+    async def _handle_certificate_update(self, message: Dict[str, Any]):
+        """Handle certificate update/renewal"""
+        new_cert = message.get("certificate")
+        
+        if new_cert:
+            try:
+                # Verify and save new certificate
+                if self.security_manager.verify_certificate(new_cert):
+                    with open(self.security_manager.vm_cert_path, 'w') as f:
+                        f.write(new_cert)
+                    
+                    # Reload SSL context
+                    self.security_manager._ssl_context = None
+                    
+                    logger.info("Certificate updated successfully")
+                else:
+                    logger.error("Certificate verification failed")
+                    
+            except Exception as e:
+                logger.error(f"Failed to update certificate: {e}")
+    
+    async def _heartbeat_loop(self):
+        """Send periodic heartbeats"""
+        while self._running and self._websocket and not self._websocket.closed:
+            try:
+                await self._send_heartbeat()
+                await asyncio.sleep(30)  # Send heartbeat every 30 seconds
+            except Exception as e:
+                logger.error(f"Heartbeat error: {e}")
+                break
+    
+    async def _metrics_loop(self):
+        """Send periodic metrics"""
+        while self._running and self._websocket and not self._websocket.closed:
+            try:
+                # Collect metrics
+                if 'system' in self.vm_agent.tools:
+                    metrics = await self.vm_agent.tools['system'].get_all_info()
+                    
+                    await self._send_message({
+                        "type": MessageType.METRICS.value,
+                        "data": metrics,
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+                
+                await asyncio.sleep(60)  # Send metrics every minute
+            except Exception as e:
+                logger.error(f"Metrics error: {e}")
+                break
+    
+    async def _send_heartbeat(self):
+        """Send heartbeat message"""
+        await self._send_message({
+            "type": MessageType.HEARTBEAT.value,
+            "vm_id": self.security_manager._vm_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "status": "healthy",
+            "active_commands": len([c for c in self._active_commands.values() if c["status"] == CommandStatus.EXECUTING]),
+            "uptime": self._get_uptime()
+        })
+    
+    async def _send_message(self, message: Dict[str, Any]):
+        """Send message through WebSocket"""
+        if self._websocket and not self._websocket.closed:
+            try:
+                # Add VM ID to all messages
+                message["vm_id"] = self.security_manager._vm_id
+                
+                # Encrypt sensitive data if needed
+                if message.get("type") in [MessageType.COMMAND_RESULT.value, MessageType.METRICS.value]:
+                    # Encrypt the data portion
+                    if "data" in message or "result" in message:
+                        encrypted = await self.security_manager.encrypt_payload(
+                            message.get("data") or message.get("result")
+                        )
+                        message["encrypted_payload"] = encrypted
+                        message.pop("data", None)
+                        message.pop("result", None)
+                
+                await self._websocket.send_str(json.dumps(message))
+                
+            except Exception as e:
+                logger.error(f"Failed to send message: {e}")
+    
+    async def _send_error(self, command_id: str, error: str):
+        """Send error response"""
+        await self._send_message({
+            "type": MessageType.COMMAND_RESULT.value,
+            "id": command_id,
+            "status": CommandStatus.FAILED.value,
+            "error": error
+        })
+    
+    async def _cleanup_commands(self):
+        """Clean up old completed commands"""
+        cutoff_time = datetime.utcnow().timestamp() - 3600  # Keep for 1 hour
+        
+        to_remove = []
+        for cmd_id, cmd_info in self._active_commands.items():
+            if cmd_info["status"] in [CommandStatus.COMPLETED, CommandStatus.FAILED, CommandStatus.CANCELLED]:
+                if cmd_info["start_time"].timestamp() < cutoff_time:
+                    to_remove.append(cmd_id)
+        
+        for cmd_id in to_remove:
+            del self._active_commands[cmd_id]
+    
+    def _get_uptime(self) -> float:
+        """Get agent uptime in seconds"""
+        try:
+            with open('/proc/uptime', 'r') as f:
+                uptime_seconds = float(f.readline().split()[0])
+                return uptime_seconds
+        except:
+            return 0.0
+    
+    async def send_event(self, event_type: str, event_data: Dict[str, Any]):
+        """Send custom event to orchestrator"""
+        await self._send_message({
+            "type": MessageType.EVENT.value,
+            "event_type": event_type,
+            "data": event_data,
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    
+    async def stop(self):
+        """Stop WebSocket connection"""
+        self._running = False
+        
+        if self._websocket and not self._websocket.closed:
+            await self._websocket.close()
