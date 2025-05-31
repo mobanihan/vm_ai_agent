@@ -56,8 +56,8 @@ class FileManager:
                     "timestamp": datetime.now().isoformat()
                 }
             
-            with open(file_path, 'r', encoding=encoding) as f:
-                content = f.read()
+            async with aiofiles.open(file_path, 'r', encoding=encoding) as f:
+                content = await f.read()
             
             return {
                 "success": True,
@@ -83,8 +83,8 @@ class FileManager:
             # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
             
-            with open(file_path, 'w', encoding=encoding) as f:
-                f.write(content)
+            async with aiofiles.open(file_path, 'w', encoding=encoding) as f:
+                await f.write(content)
             
             file_size = os.path.getsize(file_path)
             
