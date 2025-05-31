@@ -7,7 +7,7 @@ name = "ai-infra-vm-agent"
 version = "1.0.0"
 description = "Production-ready VM agent for AI infrastructure management with MCP protocol support"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "AI Infra Team", email = "contact@ai-infra.com"},
 ]
@@ -19,7 +19,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
