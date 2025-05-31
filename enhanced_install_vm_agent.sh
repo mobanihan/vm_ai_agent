@@ -296,7 +296,8 @@ EOF
     chown "$USER:$GROUP" "$INSTALL_DIR/security"/*
     
     log_success "VM credentials generated (ID: $vm_id)"
-    echo "$vm_id"  # Return the VM ID for use in registration
+    # Return ONLY the VM ID without any console formatting
+    printf "%s" "$vm_id"
 }
 
 # Register with orchestrator
@@ -309,21 +310,19 @@ register_agent() {
     local csr=$(cat "$INSTALL_DIR/security/vm_agent.csr")
     local hostname=$(hostname)
     
-    # Base64 encode the CSR to avoid newline escaping issues
-    local csr_base64=$(echo "$csr" | base64 -w 0)
-    
     # Prepare registration payload using jq for better JSON handling
+    # Send CSR in PEM format as expected by the API
     local registration_payload=$(jq -n \
         --arg vm_id "$vm_id" \
         --arg api_key "$api_key" \
-        --arg csr_base64 "$csr_base64" \
+        --arg csr "$csr" \
         --arg hostname "$hostname" \
         --arg agent_version "1.0.0" \
         --arg provisioning_token "$PROVISIONING_TOKEN" \
         '{
             vm_id: $vm_id,
             api_key: $api_key,
-            csr_base64: $csr_base64,
+            csr: $csr,
             hostname: $hostname,
             agent_version: $agent_version,
             capabilities: {

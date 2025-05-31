@@ -406,7 +406,8 @@ EOF
     chmod 644 "$INSTALL_DIR/security/csr.conf"
     
     log_success "VM credentials generated (ID: $vm_id)"
-    echo "$vm_id"  # Return the VM ID
+    # Return ONLY the VM ID without any console formatting
+    printf "%s" "$vm_id"
 }
 
 # Step 3: Register agent with orchestrator
@@ -419,24 +420,22 @@ register_agent() {
     local csr=$(cat "$INSTALL_DIR/security/vm_agent.csr")
     local hostname=$(hostname)
     
-    # Base64 encode the CSR to avoid newline escaping issues
-    local csr_base64=$(echo "$csr" | base64 -w 0)
-    
     log_debug "Calling registration endpoint: $SERVER_URL/api/v1/agents/register"
-    log_debug "CSR base64 length: $(echo "$csr_base64" | wc -c) bytes"
+    log_debug "CSR length: $(echo "$csr" | wc -c) bytes"
     
     # Prepare registration payload using jq to ensure valid JSON
+    # Send CSR in PEM format as expected by the API
     local registration_payload=$(jq -n \
         --arg vm_id "$vm_id" \
         --arg api_key "$api_key" \
-        --arg csr_base64 "$csr_base64" \
+        --arg csr "$csr" \
         --arg hostname "$hostname" \
         --arg agent_version "$VERSION" \
         --arg provisioning_token "$PROVISIONING_TOKEN" \
         '{
             vm_id: $vm_id,
             api_key: $api_key,
-            csr_base64: $csr_base64,
+            csr: $csr,
             hostname: $hostname,
             agent_version: $agent_version,
             capabilities: {
@@ -517,7 +516,7 @@ register_agent() {
             echo "  1. Provisioning token expired or invalid"
             echo "  2. Provisioning token already used"
             echo "  3. Organization quota exceeded"
-            echo "  4. CSR format not accepted by orchestrator (check backend expects base64)"
+            echo "  4. CSR format not accepted by orchestrator"
             echo "  5. Network/connectivity issues"
             
         elif echo "$response" | grep -q "token"; then
