@@ -300,6 +300,88 @@ class SecurityManager:
         except Exception as e:
             logger.error(f"Certificate verification failed: {e}")
             return False
+    
+    async def load_existing_credentials(self) -> bool:
+        """Load existing credentials from disk if available"""
+        try:
+            # Load VM ID
+            if self.vm_id_path.exists():
+                with open(self.vm_id_path, 'r') as f:
+                    self._vm_id = f.read().strip()
+            
+            # Load API key
+            if self.api_key_path.exists():
+                with open(self.api_key_path, 'r') as f:
+                    self._api_key = f.read().strip()
+            
+            # Check if we have valid credentials
+            if self._vm_id and self._api_key:
+                logger.info(f"Loaded existing credentials for VM {self._vm_id}")
+                return True
+            else:
+                logger.warning("Incomplete credentials found on disk")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to load credentials: {e}")
+            return False
+    
+    def verify_api_key(self, api_key: str) -> bool:
+        """Verify if the provided API key matches the stored one"""
+        if not api_key:
+            return False
+            
+        # Load API key if not in memory
+        if not self._api_key:
+            try:
+                if self.api_key_path.exists():
+                    with open(self.api_key_path, 'r') as f:
+                        self._api_key = f.read().strip()
+                else:
+                    logger.warning("API key file not found")
+                    return False
+            except Exception as e:
+                logger.error(f"Failed to load API key: {e}")
+                return False
+        
+        return api_key == self._api_key
+    
+    def get_ca_certificate(self) -> str:
+        """Get CA certificate content"""
+        if not self.ca_cert_path.exists():
+            raise FileNotFoundError("CA certificate not found")
+        
+        try:
+            with open(self.ca_cert_path, 'r') as f:
+                return f.read()
+        except Exception as e:
+            logger.error(f"Failed to read CA certificate: {e}")
+            raise
+    
+    def get_vm_id(self) -> Optional[str]:
+        """Get VM ID, loading from disk if necessary"""
+        if not self._vm_id:
+            if self.vm_id_path.exists():
+                with open(self.vm_id_path, 'r') as f:
+                    self._vm_id = f.read().strip()
+        return self._vm_id
+    
+    def get_api_key(self) -> Optional[str]:
+        """Get API key, loading from disk if necessary"""
+        if not self._api_key:
+            if self.api_key_path.exists():
+                with open(self.api_key_path, 'r') as f:
+                    self._api_key = f.read().strip()
+        return self._api_key
+    
+    def is_initialized(self) -> bool:
+        """Check if security manager is properly initialized"""
+        return (
+            self._vm_id is not None and 
+            self._api_key is not None and 
+            self.vm_cert_path.exists() and 
+            self.vm_key_path.exists()
+        )
 
 
 class SecureHTTPClient:

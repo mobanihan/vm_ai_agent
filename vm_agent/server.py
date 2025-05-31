@@ -72,11 +72,14 @@ class VMAgentServer:
         if kwargs:
             self._update_config(self.config, kwargs)
         
+        # Initialize security manager first
+        self.security_manager = SecurityManager()
+        
+        # Try to load existing credentials
+        self._credentials_loaded = False
+        
         # Get VM identification
         self.vm_id = os.environ.get('VM_ID', self.config['agent']['id'])
-        
-        # Initialize security manager
-        self.security_manager = SecurityManager()
         
         # Initialize tenant manager
         self.tenant_manager = TenantManager()
@@ -92,12 +95,8 @@ class VMAgentServer:
         self._register_mcp_tools()
         
         # Initialize WebSocket handler if orchestrator URL is configured
+        # Note: We'll initialize this after loading credentials
         self.ws_handler: Optional[WebSocketCommandHandler] = None
-        orchestrator_url = self.config.get('orchestrator', {}).get('url')
-        if orchestrator_url:
-            self.ws_handler = WebSocketCommandHandler(
-                self, self.security_manager, orchestrator_url
-            )
         
         # Server state
         self._app: Optional[web.Application] = None
@@ -105,7 +104,7 @@ class VMAgentServer:
         self._site: Optional[web.TCPSite] = None
         self._running = False
         
-        logger.info(f"VM Agent Server {self.vm_id} initialized with security features")
+        logger.info(f"VM Agent Server {self.vm_id} initialized")
     
     def _load_config(self, config_path: str) -> Dict[str, Any]:
         """Load configuration from YAML file with environment variable substitution"""
@@ -330,19 +329,36 @@ class VMAgentServer:
     
     async def _handle_health(self, request: web.Request) -> web.Response:
         """Health check endpoint"""
-        tenant_status = "unknown"
-        if await self.tenant_manager.load_tenant_config():
-            tenant_status = "provisioned"
-        
-        health_data = {
-            "status": "healthy",
-            "vm_id": self.vm_id,
-            "version": self.config['agent']['version'],
-            "tenant_status": tenant_status,
-            "tools_enabled": list(self.tools.keys()),
-            "timestamp": datetime.now().isoformat()
-        }
-        return web.json_response(health_data)
+        try:
+            tenant_status = "unknown"
+            if await self.tenant_manager.load_tenant_config():
+                tenant_status = "provisioned"
+            
+            # Check security status
+            security_status = "uninitialized"
+            if self.security_manager.is_initialized():
+                security_status = "fully_initialized"
+            elif self._credentials_loaded:
+                security_status = "credentials_loaded"
+            
+            health_data = {
+                "status": "healthy",
+                "vm_id": self.vm_id,
+                "version": self.config['agent']['version'],
+                "tenant_status": tenant_status,
+                "security_status": security_status,
+                "tools_enabled": list(self.tools.keys()),
+                "websocket_connected": self.ws_handler is not None and self.ws_handler._running if self.ws_handler else False,
+                "timestamp": datetime.now().isoformat()
+            }
+            return web.json_response(health_data)
+        except Exception as e:
+            logger.error(f"Health check failed: {e}")
+            return web.json_response({
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }, status=500)
     
     async def _handle_info(self, request: web.Request) -> web.Response:
         """Agent information endpoint"""
@@ -367,9 +383,15 @@ class VMAgentServer:
         try:
             ca_cert = self.security_manager.get_ca_certificate()
             return web.Response(text=ca_cert, content_type='application/x-pem-file')
+        except FileNotFoundError:
+            logger.warning("CA certificate not available yet")
+            return web.json_response({
+                'error': 'CA certificate not available', 
+                'message': 'Agent may not be fully registered yet'
+            }, status=404)
         except Exception as e:
             logger.error(f"Failed to get CA certificate: {e}")
-            return web.json_response({'error': 'CA certificate not available'}, status=500)
+            return web.json_response({'error': 'Internal server error'}, status=500)
     
     async def _handle_mcp_request(self, request: web.Request) -> web.Response:
         """Handle MCP protocol requests"""
@@ -381,6 +403,98 @@ class VMAgentServer:
             logger.error(f"MCP request error: {e}")
             return web.json_response({'error': str(e)}, status=500)
     
+    def _create_ssl_context(self) -> Optional[ssl.SSLContext]:
+        """Create SSL context for HTTPS server"""
+        ssl_config = self.config.get('server', {}).get('ssl', {})
+        cert_file = ssl_config.get('cert_file')
+        key_file = ssl_config.get('key_file')
+        
+        # Return None if SSL is not configured or certificates don't exist yet
+        if not cert_file or not key_file:
+            logger.warning("SSL cert_file and key_file not specified in config")
+            return None
+        
+        if not os.path.exists(cert_file) or not os.path.exists(key_file):
+            logger.warning(f"SSL certificates not found: {cert_file}, {key_file}")
+            logger.info("Server will start without SSL until certificates are available")
+            return None
+        
+        try:
+            ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            ssl_context.load_cert_chain(cert_file, key_file)
+            logger.info("SSL context created successfully")
+            return ssl_context
+        except Exception as e:
+            logger.error(f"Failed to create SSL context: {e}")
+            return None
+
+    async def register_with_orchestrator(self, provisioning_token: Optional[str] = None) -> bool:
+        """Register this agent with the orchestrator"""
+        try:
+            # First, ensure we have basic credentials
+            if not await self._ensure_credentials():
+                logger.error("Failed to ensure basic credentials")
+                return False
+            
+            # Initialize WebSocket handler now that we have credentials
+            orchestrator_url = self.config.get('orchestrator', {}).get('url')
+            if not orchestrator_url:
+                logger.error("Orchestrator URL not configured")
+                return False
+            
+            if not self.ws_handler:
+                self.ws_handler = WebSocketCommandHandler(
+                    self, self.security_manager, orchestrator_url
+                )
+            
+            # Perform registration
+            success = await self.ws_handler.register_agent(provisioning_token)
+            
+            if success:
+                logger.info("Successfully registered with orchestrator")
+                # Update VM ID from security manager if it changed
+                vm_id = self.security_manager.get_vm_id()
+                if vm_id and vm_id != self.vm_id:
+                    self.vm_id = vm_id
+            else:
+                logger.error("Failed to register with orchestrator")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Failed to register with orchestrator: {e}")
+            return False
+    
+    async def _ensure_credentials(self) -> bool:
+        """Ensure we have the basic credentials needed for operation"""
+        try:
+            # Try to load existing credentials first
+            if await self.security_manager.load_existing_credentials():
+                self._credentials_loaded = True
+                # Update VM ID from loaded credentials
+                vm_id = self.security_manager.get_vm_id()
+                if vm_id:
+                    self.vm_id = vm_id
+                return True
+            
+            # If no existing credentials, generate basic ones
+            logger.info("No existing credentials found, generating new ones...")
+            
+            # Generate VM ID and API key
+            self.security_manager._vm_id = await self.security_manager._get_or_create_vm_id()
+            self.security_manager._api_key = await self.security_manager._get_or_create_api_key()
+            
+            # Update our VM ID
+            self.vm_id = self.security_manager._vm_id
+            
+            self._credentials_loaded = True
+            logger.info(f"Generated basic credentials for VM {self.vm_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to ensure credentials: {e}")
+            return False
+
     async def start(self) -> None:
         """Start the VM agent server"""
         if self._running:
@@ -388,6 +502,10 @@ class VMAgentServer:
             return
         
         try:
+            # Ensure we have basic credentials before starting
+            if not self._credentials_loaded:
+                await self._ensure_credentials()
+            
             # Create application
             self._app = await self.create_app()
             
@@ -395,7 +513,7 @@ class VMAgentServer:
             self._runner = web.AppRunner(self._app)
             await self._runner.setup()
             
-            # Configure SSL if enabled
+            # Configure SSL if enabled and certificates are available
             ssl_context = None
             if self.config.get('server', {}).get('ssl', {}).get('enabled', False):
                 ssl_context = self._create_ssl_context()
@@ -414,15 +532,15 @@ class VMAgentServer:
             await self._site.start()
             self._running = True
             
-            # Start WebSocket handler if configured
-            if self.ws_handler:
+            # Start WebSocket handler if configured and we have credentials
+            if self.ws_handler and self._credentials_loaded:
                 await self.ws_handler.start()
             
-            logger.info(f"VM Agent Server started on {host}:{port}")
-            logger.info(f"SSL enabled: {ssl_context is not None}")
+            protocol = "HTTPS" if ssl_context else "HTTP"
+            logger.info(f"VM Agent Server started on {host}:{port} ({protocol})")
             
         except Exception as e:
-            logger.error(f"Failed to start server: {e}")
+            logger.error(f"Failed to start server: {e}", exc_info=True)
             await self.stop()
             raise
     
@@ -449,36 +567,6 @@ class VMAgentServer:
         except Exception as e:
             logger.error(f"Error stopping server: {e}")
     
-    def _create_ssl_context(self) -> ssl.SSLContext:
-        """Create SSL context for HTTPS server"""
-        ssl_config = self.config.get('server', {}).get('ssl', {})
-        cert_file = ssl_config.get('cert_file')
-        key_file = ssl_config.get('key_file')
-        
-        if not cert_file or not key_file:
-            raise ValueError("SSL cert_file and key_file must be specified")
-        
-        if not os.path.exists(cert_file) or not os.path.exists(key_file):
-            raise ValueError(f"SSL files not found: {cert_file}, {key_file}")
-        
-        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        ssl_context.load_cert_chain(cert_file, key_file)
-        
-        return ssl_context
-    
-    async def register_with_orchestrator(self, provisioning_token: Optional[str] = None) -> bool:
-        """Register this agent with the orchestrator"""
-        try:
-            if not self.ws_handler:
-                logger.error("WebSocket handler not configured")
-                return False
-            
-            return await self.ws_handler.register_agent(provisioning_token)
-            
-        except Exception as e:
-            logger.error(f"Failed to register with orchestrator: {e}")
-            return False
-    
     async def run_forever(self) -> None:
         """Run the server forever until interrupted"""
         try:
@@ -501,6 +589,14 @@ class VMAgentServer:
             logger.info("Received keyboard interrupt")
         finally:
             await self.stop()
+
+    def is_ready(self) -> bool:
+        """Check if the server is ready to accept requests"""
+        return (
+            self._credentials_loaded and 
+            self.security_manager.get_vm_id() is not None and
+            self.security_manager.get_api_key() is not None
+        )
 
 
 async def main() -> None:
