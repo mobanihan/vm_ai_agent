@@ -262,6 +262,40 @@ logging:
                                          └──────────────────┘
 ```
 
+## 🔧 Backend Integration Notes
+
+### Registration API Changes (v1.0.0+)
+
+**Important for Backend Developers**: The registration endpoint now receives CSR data as base64-encoded to avoid JSON escaping issues:
+
+**Previous format (deprecated):**
+```json
+{
+  "csr": "-----BEGIN CERTIFICATE REQUEST-----\nMIIC...\n-----END CERTIFICATE REQUEST-----"
+}
+```
+
+**New format (current):**
+```json
+{
+  "csr_base64": "LS0tLS1CRUdJTi..."
+}
+```
+
+**Backend Handling:**
+```python
+import base64
+from cryptography import x509
+
+# Decode base64 CSR
+csr_pem = base64.b64decode(request_data['csr_base64']).decode('utf-8')
+
+# Parse with cryptography library
+csr = x509.load_pem_x509_csr(csr_pem.encode('utf-8'))
+```
+
+This change resolves JSON parsing issues with escaped newlines in CSR data.
+
 ## 🛠️ CLI Commands
 
 ### Installation & Provisioning

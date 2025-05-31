@@ -419,27 +419,24 @@ register_agent() {
     local csr=$(cat "$INSTALL_DIR/security/vm_agent.csr")
     local hostname=$(hostname)
     
-    # Properly escape CSR for JSON (replace newlines with \n)
-    local csr_escaped=$(echo "$csr" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/\r//g')
+    # Base64 encode the CSR to avoid newline escaping issues
+    local csr_base64=$(echo "$csr" | base64 -w 0)
     
-    # Escape other fields for JSON safety
-    local hostname_escaped=$(echo "$hostname" | sed 's/"/\\"/g')
-    local vm_id_escaped=$(echo "$vm_id" | sed 's/"/\\"/g')
-    local api_key_escaped=$(echo "$api_key" | sed 's/"/\\"/g')
-    local token_escaped=$(echo "$PROVISIONING_TOKEN" | sed 's/"/\\"/g')
+    log_debug "Calling registration endpoint: $SERVER_URL/api/v1/agents/register"
+    log_debug "CSR base64 length: $(echo "$csr_base64" | wc -c) bytes"
     
     # Prepare registration payload using jq to ensure valid JSON
     local registration_payload=$(jq -n \
-        --arg vm_id "$vm_id_escaped" \
-        --arg api_key "$api_key_escaped" \
-        --arg csr "$csr_escaped" \
-        --arg hostname "$hostname_escaped" \
+        --arg vm_id "$vm_id" \
+        --arg api_key "$api_key" \
+        --arg csr_base64 "$csr_base64" \
+        --arg hostname "$hostname" \
         --arg agent_version "$VERSION" \
-        --arg provisioning_token "$token_escaped" \
+        --arg provisioning_token "$PROVISIONING_TOKEN" \
         '{
             vm_id: $vm_id,
             api_key: $api_key,
-            csr: $csr,
+            csr_base64: $csr_base64,
             hostname: $hostname,
             agent_version: $agent_version,
             capabilities: {
@@ -451,7 +448,6 @@ register_agent() {
             provisioning_token: $provisioning_token
         }')
     
-    log_debug "Calling registration endpoint: $SERVER_URL/api/v1/agents/register"
     log_debug "Payload size: $(echo "$registration_payload" | wc -c) bytes"
     
     # Call agent registration endpoint
@@ -521,7 +517,7 @@ register_agent() {
             echo "  1. Provisioning token expired or invalid"
             echo "  2. Provisioning token already used"
             echo "  3. Organization quota exceeded"
-            echo "  4. CSR format not accepted by orchestrator"
+            echo "  4. CSR format not accepted by orchestrator (check backend expects base64)"
             echo "  5. Network/connectivity issues"
             
         elif echo "$response" | grep -q "token"; then

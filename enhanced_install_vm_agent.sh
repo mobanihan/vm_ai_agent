@@ -309,28 +309,30 @@ register_agent() {
     local csr=$(cat "$INSTALL_DIR/security/vm_agent.csr")
     local hostname=$(hostname)
     
-    # Prepare registration payload
-    local registration_payload=$(cat << EOF
-{
-    "vm_id": "$vm_id",
-    "api_key": "$api_key",
-    "csr": "$csr",
-    "hostname": "$hostname",
-    "agent_version": "1.0.0",
-    "capabilities": {
-        "shell_executor": true,
-        "file_manager": true,
-        "system_monitor": true,
-        "log_analyzer": true
-    }
-EOF
-
-    # Add provisioning token if provided
-    if [[ -n "$PROVISIONING_TOKEN" ]]; then
-        registration_payload="$registration_payload,\"provisioning_token\": \"$PROVISIONING_TOKEN\""
-    fi
+    # Base64 encode the CSR to avoid newline escaping issues
+    local csr_base64=$(echo "$csr" | base64 -w 0)
     
-    registration_payload="$registration_payload}"
+    # Prepare registration payload using jq for better JSON handling
+    local registration_payload=$(jq -n \
+        --arg vm_id "$vm_id" \
+        --arg api_key "$api_key" \
+        --arg csr_base64 "$csr_base64" \
+        --arg hostname "$hostname" \
+        --arg agent_version "1.0.0" \
+        --arg provisioning_token "$PROVISIONING_TOKEN" \
+        '{
+            vm_id: $vm_id,
+            api_key: $api_key,
+            csr_base64: $csr_base64,
+            hostname: $hostname,
+            agent_version: $agent_version,
+            capabilities: {
+                shell_executor: true,
+                file_manager: true,
+                system_monitor: true,
+                log_analyzer: true
+            }
+        } + (if $provisioning_token != "" then {provisioning_token: $provisioning_token} else {} end)')
     
     # Call registration endpoint
     local response=$(curl -s -X POST "$ORCHESTRATOR_URL/api/v1/agents/register" \
@@ -339,16 +341,16 @@ EOF
         --max-time 30)
     
     # Check if registration was successful
-    if echo "$response" | grep -q '"agent_id"'; then
-        # Parse response and save certificates
-        local agent_id=$(echo "$response" | grep -o '"agent_id":"[^"]*"' | cut -d'"' -f4)
-        local certificate=$(echo "$response" | grep -o '"certificate":"[^"]*"' | cut -d'"' -f4 | sed 's/\\n/\n/g')
-        local ca_certificate=$(echo "$response" | grep -o '"ca_certificate":"[^"]*"' | cut -d'"' -f4 | sed 's/\\n/\n/g')
-        local websocket_url=$(echo "$response" | grep -o '"websocket_url":"[^"]*"' | cut -d'"' -f4)
+    if echo "$response" | jq -e '.agent_id' >/dev/null 2>&1; then
+        # Parse response using jq for better handling
+        local agent_id=$(echo "$response" | jq -r '.agent_id')
+        local certificate=$(echo "$response" | jq -r '.certificate')
+        local ca_certificate=$(echo "$response" | jq -r '.ca_certificate')
+        local websocket_url=$(echo "$response" | jq -r '.websocket_url')
         
         # Save certificates
-        echo -e "$certificate" > "$INSTALL_DIR/security/vm_agent.crt"
-        echo -e "$ca_certificate" > "$INSTALL_DIR/security/ca.crt"
+        echo "$certificate" > "$INSTALL_DIR/security/vm_agent.crt"
+        echo "$ca_certificate" > "$INSTALL_DIR/security/ca.crt"
         echo "$agent_id" > "$INSTALL_DIR/security/agent_id"
         echo "$websocket_url" > "$INSTALL_DIR/security/websocket_url"
         
