@@ -14,6 +14,12 @@ echo "📁 Creating directory structure..."
 sudo mkdir -p /opt/vm-agent/{src,config,security,tenant,logs}
 sudo mkdir -p /var/log/vm-agent
 
+# Create log file with proper permissions
+echo "📝 Creating log file..."
+sudo touch /var/log/vm-agent.log /var/log/vm-agent/agent.log
+sudo chown vm-agent:vm-agent /var/log/vm-agent.log /var/log/vm-agent/agent.log
+sudo chmod 644 /var/log/vm-agent.log /var/log/vm-agent/agent.log
+
 # Copy source code to proper location
 echo "📋 Copying source code..."
 if [ -d "/root/vm_ai_agent" ]; then
