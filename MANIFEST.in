@@ -4,6 +4,9 @@ include LICENSE
 include requirements.txt
 include CHANGELOG.md
 
+# Include scripts
+recursive-include scripts *.py *.sh *.md
+
 # Include configuration files
 recursive-include vm_agent/config *.yaml *.yml
 recursive-include vm_agent/systemd *.service
