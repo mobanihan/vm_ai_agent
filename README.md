@@ -30,15 +30,171 @@ A production-ready VM agent for AI infrastructure management with MCP (Model Con
 - **Configurable**: Flexible configuration system with environment variable support
 - **Monitorable**: Built-in health checks and metrics endpoints
 
+### 🆕 **New Features**
+- **🔍 Smart Environment Detection**: Automatically detects Python environments and virtual environments
+- **🛡️ Intelligent Wrapper Scripts**: Handles environment changes and provides fallback mechanisms
+- **🧪 Diagnostic Tools**: Comprehensive environment troubleshooting and validation
+- **🔧 Flexible Installation**: Multiple installation modes for different deployment scenarios
+- **⚡ Improved Error Handling**: Better error messages and recovery mechanisms
+
 ## Quick Start
 
-### Installation
+### Prerequisites
+
+- **Python 3.8+** (Python 3.11+ recommended)
+- **Linux system** with systemd support
+- **Root/sudo access** for system service installation
+
+### Installation Options
+
+#### Option 1: Simple Installation (Recommended)
 
 ```bash
+# Install the package
 pip install ai-infra-vm-agent
+
+# Install as system service (auto-detects your Python environment)
+sudo python3 -m vm_agent.installer --orchestrator-url https://your-orchestrator.com
 ```
 
-### Basic Usage
+#### Option 2: Development Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/ai-infra/vm-agent.git
+cd vm-agent
+
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install in development mode
+pip install -e .
+
+# Install as system service (will use your virtual environment)
+sudo python3 -m vm_agent.installer --orchestrator-url https://your-orchestrator.com
+```
+
+#### Option 3: Complex Environments (with Wrapper Script)
+
+For environments with complex Python setups or where the Python environment might change:
+
+```bash
+# Install with intelligent wrapper script
+sudo python3 -m vm_agent.installer \
+    --orchestrator-url https://your-orchestrator.com \
+    --use-wrapper
+```
+
+#### Option 4: With Provisioning Token
+
+```bash
+# Automated setup with provisioning token
+sudo python3 -m vm_agent.installer \
+    --orchestrator-url https://your-orchestrator.com \
+    --provisioning-token "your-token-here"
+```
+
+### Verification
+
+After installation, verify everything is working:
+
+```bash
+# Check service status
+sudo systemctl status vm-agent
+
+# Check health endpoint
+curl http://localhost:8080/health
+
+# Run diagnostic tool
+python3 scripts/diagnose_environment.py
+```
+
+## Installation Troubleshooting
+
+### 🧪 Diagnostic Tool
+
+If you encounter any issues, run our comprehensive diagnostic tool:
+
+```bash
+python3 scripts/diagnose_environment.py
+```
+
+This will check:
+- ✅ Python installation and virtual environment detection
+- ✅ All required dependencies
+- ✅ VM agent module imports
+- ✅ Installation paths and systemd service
+- ✅ Provides specific fix suggestions
+
+### Common Installation Issues
+
+#### Issue: "ModuleNotFoundError: No module named 'aiofiles'"
+
+**Cause**: Python environment mismatch between installation and runtime.
+
+**Solutions**:
+```bash
+# Option 1: Reinstall with auto-detection
+sudo python3 -m vm_agent.installer --uninstall
+sudo python3 -m vm_agent.installer --orchestrator-url YOUR_URL
+
+# Option 2: Use wrapper script
+sudo python3 -m vm_agent.installer --orchestrator-url YOUR_URL --use-wrapper
+
+# Option 3: Install dependencies system-wide
+sudo pip3 install aiofiles aiohttp aiohttp-cors pyyaml cryptography psutil
+```
+
+#### Issue: Service fails to start
+
+**Diagnosis**:
+```bash
+# Check service logs
+sudo journalctl -u vm-agent -f
+
+# Run diagnostic
+python3 scripts/diagnose_environment.py
+
+# Test Python environment
+python3 -c "import vm_agent; print('✅ VM Agent works')"
+```
+
+#### Issue: SSL/Certificate errors
+
+**Solutions**:
+```bash
+# Reinstall with fresh certificates
+sudo python3 -m vm_agent.installer --orchestrator-url YOUR_URL --uninstall
+sudo python3 -m vm_agent.installer --orchestrator-url YOUR_URL
+
+# Check certificate permissions
+sudo ls -la /opt/vm-agent/security/
+```
+
+### Installation Command Reference
+
+```bash
+# Basic installation
+sudo python3 -m vm_agent.installer --orchestrator-url URL
+
+# With provisioning token
+sudo python3 -m vm_agent.installer --orchestrator-url URL --provisioning-token TOKEN
+
+# With wrapper script (for complex environments)
+sudo python3 -m vm_agent.installer --orchestrator-url URL --use-wrapper
+
+# With tenant ID
+sudo python3 -m vm_agent.installer --orchestrator-url URL --tenant-id TENANT
+
+# Uninstall
+sudo python3 -m vm_agent.installer --uninstall
+
+# Get help
+python3 -m vm_agent.installer --help
+```
+
+## Basic Usage
 
 #### Starting the Agent Server
 
@@ -51,16 +207,6 @@ vm-agent server --host 0.0.0.0 --port 8080 --ssl
 
 # Start with custom config file
 vm-agent --config /path/to/config.yaml server
-```
-
-#### Installing on a New VM
-
-```bash
-# Automated installation with provisioning token
-vm-agent install --orchestrator-url https://orchestrator.example.com --provisioning-token TOKEN
-
-# Manual installation with tenant ID
-vm-agent install --orchestrator-url https://orchestrator.example.com --tenant-id TENANT_ID
 ```
 
 #### Using the Client
@@ -99,16 +245,66 @@ vm_agent/
 ├── server.py          # Main agent server with MCP protocol support
 ├── client.py          # Client library for connecting to agents
 ├── cli.py             # Command-line interface
+├── installer.py       # 🆕 Smart installer with environment detection
 ├── tools/             # Tool implementations
 │   ├── shell_executor.py      # Shell command execution
 │   ├── file_manager.py        # File system operations
 │   ├── system_monitor.py      # System metrics collection
 │   ├── log_analyzer.py        # Log analysis and parsing
-│   ├── security_manager.py    # Security and authentication
-│   ├── websocket_handler.py   # WebSocket communication
+│   ├── security_manager.py    # 🔧 Enhanced security and authentication
+│   ├── websocket_handler.py   # 🔧 Improved WebSocket communication
 │   └── tenant_manager.py      # Multi-tenant management
 ├── config/            # Configuration files
-└── systemd/           # System service files
+├── systemd/           # System service files
+└── scripts/           # 🆕 Diagnostic and utility scripts
+    ├── diagnose_environment.py    # Environment diagnostic tool
+    └── test_server.py             # Server functionality tests
+```
+
+### 🆕 Smart Installation Features
+
+#### Python Environment Auto-Detection
+
+The installer automatically detects and configures the correct Python environment:
+
+```bash
+# When you run the installer from a virtual environment:
+(venv) $ sudo python3 -m vm_agent.installer --orchestrator-url URL
+
+# Output:
+✓ Detected virtual environment, using: /path/to/venv/bin/python3
+✓ Installed systemd service
+```
+
+#### Intelligent Wrapper Script
+
+For complex environments, the wrapper script provides:
+
+- **Environment Detection**: Automatically finds the correct Python interpreter
+- **Fallback Mechanisms**: Tries multiple Python locations if the original is moved
+- **Dependency Validation**: Tests if Python can import required modules
+- **Clear Error Messages**: Provides actionable error information
+
+Example wrapper script generated:
+
+```bash
+#!/bin/bash
+# VM Agent Wrapper Script - Auto-generated
+
+cd /opt/vm-agent
+
+# Auto-detect Python environment
+DETECTED_PYTHON="/root/vm_ai_agent/venv/bin/python3"
+
+# Test if Python can import required modules
+if ! "$DETECTED_PYTHON" -c "import aiofiles, aiohttp, vm_agent" 2>/dev/null; then
+    echo "❌ Python cannot import required modules"
+    # Try fallback locations...
+    exit 1
+fi
+
+# Execute the vm-agent server
+exec "$DETECTED_PYTHON" -m vm_agent.server "$@"
 ```
 
 ### Communication Flow
@@ -212,8 +408,14 @@ vm-agent install --orchestrator-url URL --provisioning-token TOKEN
 # Manual installation
 vm-agent install --orchestrator-url URL --tenant-id TENANT
 
+# Installation with wrapper script
+vm-agent install --orchestrator-url URL --use-wrapper
+
 # Force reinstall
 vm-agent install --orchestrator-url URL --provisioning-token TOKEN --force
+
+# Uninstall
+vm-agent install --uninstall
 ```
 
 ### Operations
@@ -244,6 +446,19 @@ vm-agent config
 vm-agent config --output config.yaml
 ```
 
+### 🆕 Diagnostic Commands
+
+```bash
+# Comprehensive environment diagnostics
+python3 scripts/diagnose_environment.py
+
+# Test server functionality
+python3 scripts/test_server.py
+
+# Check Python environment
+python3 -c "import vm_agent; print('✅ VM Agent works')"
+```
+
 ## API Reference
 
 ### MCP Protocol Endpoints
@@ -262,10 +477,25 @@ The agent implements the Model Context Protocol (MCP) for tool integration:
 
 #### HTTP Endpoints
 
-- `GET /health` - Health check
+- `GET /health` - Health check (🔧 Enhanced with security status)
 - `GET /info` - Agent information
-- `GET /api/v1/ca-certificate` - Get CA certificate
+- `GET /api/v1/ca-certificate` - Get CA certificate (🔧 Improved error handling)
 - `POST /mcp` - MCP protocol requests
+
+### 🔧 Enhanced Health Check Response
+
+```json
+{
+  "status": "healthy",
+  "vm_id": "vm-12345",
+  "version": "1.0.0",
+  "tenant_status": "provisioned",
+  "security_status": "fully_initialized",
+  "tools_enabled": ["shell", "file", "system", "logs"],
+  "websocket_connected": true,
+  "timestamp": "2024-01-01T12:00:00Z"
+}
+```
 
 ## Security
 
@@ -286,6 +516,15 @@ The agent implements the Model Context Protocol (MCP) for tool integration:
    )
    ```
 
+### 🔧 Enhanced Security Features
+
+The security manager now includes:
+
+- **🔍 Smart Credential Loading**: Automatically loads credentials from disk with fallbacks
+- **🛡️ Improved API Key Verification**: Better error handling and validation
+- **🔐 Enhanced Certificate Management**: Graceful handling of missing certificates
+- **⚡ Initialization Detection**: Checks if security is properly configured
+
 ### Certificate Management
 
 The agent automatically manages certificates for secure communication:
@@ -296,7 +535,9 @@ The agent automatically manages certificates for secure communication:
 ├── ca.crt              # CA certificate
 ├── server.crt          # Server certificate
 ├── server.key          # Server private key
-└── client.crt          # Client certificate (if applicable)
+├── vm.crt              # VM agent certificate
+├── vm.key              # VM agent private key
+└── api.key             # API key file
 ```
 
 ## Development
@@ -333,6 +574,9 @@ pytest tests/test_server.py
 
 # Run with verbose output
 pytest -v
+
+# 🆕 Run server functionality tests
+python scripts/test_server.py
 ```
 
 ### Code Quality
@@ -363,14 +607,46 @@ RUN pip install ai-infra-vm-agent
 CMD ["vm-agent", "server"]
 ```
 
-### Systemd Service
+### Systemd Service (🔧 Enhanced)
+
+The installer now creates optimized systemd services:
 
 ```bash
-# Install as system service
-sudo cp systemd/vm-agent.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable vm-agent
-sudo systemctl start vm-agent
+# Install as system service (auto-detects environment)
+sudo python3 -m vm_agent.installer --orchestrator-url URL
+
+# Service file is automatically generated at:
+# /etc/systemd/system/vm-agent.service
+```
+
+Example generated service file:
+
+```ini
+[Unit]
+Description=VM Agent for AI Infrastructure Management
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=vm-agent
+Group=vm-agent
+WorkingDirectory=/opt/vm-agent
+Environment=PYTHONPATH=/opt/vm-agent
+ExecStart=/root/vm_ai_agent/venv/bin/python3 -m vm_agent.server
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
 ```
 
 ### Kubernetes
@@ -401,13 +677,15 @@ spec:
 # Check agent health
 curl https://agent:8080/health
 
-# Expected response:
+# Expected response (🔧 Enhanced):
 {
   "status": "healthy",
   "vm_id": "vm-12345",
   "version": "1.0.0",
   "tenant_status": "provisioned",
+  "security_status": "fully_initialized",
   "tools_enabled": ["shell", "file", "system", "logs"],
+  "websocket_connected": true,
   "timestamp": "2024-01-01T12:00:00Z"
 }
 ```
@@ -433,7 +711,53 @@ Logs are written to `/var/log/vm-agent.log` with structured format:
 
 ## Troubleshooting
 
+### 🆕 Comprehensive Diagnostic Tool
+
+**First step for any issue**: Run the diagnostic tool
+
+```bash
+python3 scripts/diagnose_environment.py
+```
+
+This provides:
+- ✅ Complete Python environment analysis
+- ✅ Dependency verification
+- ✅ VM agent module testing
+- ✅ Installation path validation
+- ✅ Systemd service status
+- ✅ Specific fix recommendations
+
 ### Common Issues
+
+#### 🔧 Environment Issues
+
+**ModuleNotFoundError: No module named 'aiofiles'**
+
+```bash
+# Diagnosis
+python3 scripts/diagnose_environment.py
+
+# Quick fixes
+sudo python3 -m vm_agent.installer --orchestrator-url URL --use-wrapper
+# OR
+sudo pip3 install aiofiles aiohttp aiohttp-cors pyyaml cryptography psutil
+```
+
+**Service fails to start**
+
+```bash
+# Check service status
+sudo systemctl status vm-agent
+
+# Check detailed logs
+sudo journalctl -u vm-agent -f --no-pager
+
+# Run diagnostics
+python3 scripts/diagnose_environment.py
+
+# Test Python environment
+python3 -c "import vm_agent; print('✅ VM Agent works')"
+```
 
 #### Connection Refused
 ```bash
@@ -444,16 +768,23 @@ sudo systemctl status vm-agent
 sudo journalctl -u vm-agent -f
 
 # Test connectivity
-vm-agent test
+curl http://localhost:8080/health
+
+# Run diagnostic
+python3 scripts/diagnose_environment.py
 ```
 
 #### Certificate Issues
 ```bash
-# Verify certificates
-openssl x509 -in /opt/vm-agent/security/server.crt -text -noout
+# Check CA certificate endpoint
+curl http://localhost:8080/api/v1/ca-certificate
 
-# Regenerate certificates
-vm-agent install --force
+# Verify certificates exist
+ls -la /opt/vm-agent/security/
+
+# Regenerate certificates (reinstall)
+sudo python3 -m vm_agent.installer --uninstall
+sudo python3 -m vm_agent.installer --orchestrator-url URL
 ```
 
 #### Permission Denied
@@ -466,6 +797,36 @@ sudo chown -R vm-agent:vm-agent /opt/vm-agent/
 sudo chmod 600 /opt/vm-agent/security/*
 ```
 
+### 🆕 Step-by-Step Troubleshooting
+
+1. **Run Diagnostic Tool**
+   ```bash
+   python3 scripts/diagnose_environment.py
+   ```
+
+2. **Check Service Status**
+   ```bash
+   sudo systemctl status vm-agent
+   sudo journalctl -u vm-agent -f
+   ```
+
+3. **Test Manual Startup**
+   ```bash
+   cd /opt/vm-agent
+   sudo -u vm-agent python3 -m vm_agent.server
+   ```
+
+4. **Verify Dependencies**
+   ```bash
+   python3 -c "import aiofiles, aiohttp, vm_agent; print('✅ All modules work')"
+   ```
+
+5. **Reinstall if Needed**
+   ```bash
+   sudo python3 -m vm_agent.installer --uninstall
+   sudo python3 -m vm_agent.installer --orchestrator-url YOUR_URL --use-wrapper
+   ```
+
 ## Contributing
 
 We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
@@ -476,8 +837,28 @@ Please report issues on [GitHub Issues](https://github.com/ai-infra/vm-agent/iss
 - VM Agent version
 - Operating system and version
 - Configuration (sanitized)
+- Output from `python3 scripts/diagnose_environment.py`
 - Steps to reproduce
 - Expected vs actual behavior
+
+## Recent Improvements (v1.1.0)
+
+### 🆕 Major Enhancements
+
+- **🔍 Smart Environment Detection**: Automatic Python environment detection and configuration
+- **🛡️ Intelligent Wrapper Scripts**: Advanced fallback mechanisms for complex environments  
+- **🧪 Comprehensive Diagnostics**: Built-in troubleshooting and validation tools
+- **🔧 Enhanced Security**: Improved credential management and error handling
+- **⚡ Better Error Recovery**: Graceful handling of missing dependencies and partial states
+- **📋 Improved Documentation**: Comprehensive installation and troubleshooting guides
+
+### 🔧 Technical Improvements
+
+- **SecurityManager**: Added credential loading, API key verification, and certificate management
+- **Installer**: Smart Python environment detection and flexible installation options  
+- **Server**: Enhanced initialization flow and better SSL handling
+- **WebSocket Handler**: Improved credential validation and registration flow
+- **Diagnostic Tools**: Environment analysis and specific fix recommendations
 
 ## License
 
@@ -489,7 +870,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - 💬 [Discord Community](https://discord.gg/ai-infra)
 - 📧 [Email Support](mailto:support@ai-infra.com)
 - 🐛 [Issue Tracker](https://github.com/ai-infra/vm-agent/issues)
+- 🧪 [Diagnostic Tool](scripts/diagnose_environment.py)
 
 ---
 
 **AI Infra VM Agent** - Making VM management simple, secure, and scalable. 
+
+*Now with intelligent environment detection and comprehensive troubleshooting tools!* 🚀 
