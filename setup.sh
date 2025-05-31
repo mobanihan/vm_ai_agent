@@ -386,26 +386,40 @@ register_agent() {
     local csr=$(cat "$INSTALL_DIR/security/vm_agent.csr")
     local hostname=$(hostname)
     
-    # Prepare registration payload
-    local registration_payload=$(cat << EOF
-{
-    "vm_id": "$vm_id",
-    "api_key": "$api_key",
-    "csr": "$csr",
-    "hostname": "$hostname",
-    "agent_version": "$VERSION",
-    "capabilities": {
-        "shell_executor": true,
-        "file_manager": true,
-        "system_monitor": true,
-        "log_analyzer": true
-    },
-    "provisioning_token": "$PROVISIONING_TOKEN"
-}
-EOF
-    )
+    # Properly escape CSR for JSON (replace newlines with \n)
+    local csr_escaped=$(echo "$csr" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/\r//g')
+    
+    # Escape other fields for JSON safety
+    local hostname_escaped=$(echo "$hostname" | sed 's/"/\\"/g')
+    local vm_id_escaped=$(echo "$vm_id" | sed 's/"/\\"/g')
+    local api_key_escaped=$(echo "$api_key" | sed 's/"/\\"/g')
+    local token_escaped=$(echo "$PROVISIONING_TOKEN" | sed 's/"/\\"/g')
+    
+    # Prepare registration payload using jq to ensure valid JSON
+    local registration_payload=$(jq -n \
+        --arg vm_id "$vm_id_escaped" \
+        --arg api_key "$api_key_escaped" \
+        --arg csr "$csr_escaped" \
+        --arg hostname "$hostname_escaped" \
+        --arg agent_version "$VERSION" \
+        --arg provisioning_token "$token_escaped" \
+        '{
+            vm_id: $vm_id,
+            api_key: $api_key,
+            csr: $csr,
+            hostname: $hostname,
+            agent_version: $agent_version,
+            capabilities: {
+                shell_executor: true,
+                file_manager: true,
+                system_monitor: true,
+                log_analyzer: true
+            },
+            provisioning_token: $provisioning_token
+        }')
     
     log_debug "Calling registration endpoint: $SERVER_URL/api/v1/agents/register"
+    log_debug "Payload size: $(echo "$registration_payload" | wc -c) bytes"
     
     # Call agent registration endpoint
     local response=$(curl -s -X POST "$SERVER_URL/api/v1/agents/register" \
@@ -426,6 +440,17 @@ EOF
     if [[ -z "$agent_id" ]] || [[ "$agent_id" == "null" ]]; then
         log_error "Registration failed. Response:"
         echo "$response" | head -5
+        
+        # Additional debugging for JSON errors
+        if echo "$response" | grep -q "JSON decode error"; then
+            log_error "JSON payload validation failed. Checking payload..."
+            if echo "$registration_payload" | jq . >/dev/null 2>&1; then
+                log_info "Payload JSON is valid"
+            else
+                log_error "Payload JSON is invalid!"
+                echo "$registration_payload" | head -5
+            fi
+        fi
         exit 1
     fi
     

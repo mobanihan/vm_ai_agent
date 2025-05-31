@@ -38,7 +38,8 @@ A production-ready VM agent for AI infrastructure management with MCP (Model Con
 - **📡 Command Execution**: Remote command execution from orchestrator dashboard
 
 ### 🆕 **New Features**
-- **🔍 Smart Environment Detection**: Automatically detects Python environments and virtual environments
+- **🚀 One-Script Installation**: Complete setup with single command
+- **🔍 Smart Environment Detection**: Automatically detects and sets up Python environments
 - **🛡️ Intelligent Wrapper Scripts**: Handles environment changes and provides fallback mechanisms
 - **🧪 Diagnostic Tools**: Comprehensive environment troubleshooting and validation
 - **🔧 Flexible Installation**: Multiple installation modes for different deployment scenarios
@@ -48,76 +49,70 @@ A production-ready VM agent for AI infrastructure management with MCP (Model Con
 
 ### Prerequisites
 
-- **Python 3.8+** (Python 3.11+ recommended)
 - **Linux system** with systemd support
 - **Root/sudo access** for system service installation
 - **Network connectivity** to orchestrator
 - **Valid orchestrator account** with organization membership
 
-## 🚀 Complete Installation Guide
+## 🚀 **One-Script Installation (RECOMMENDED)**
 
-### Method 1: Enhanced Installation Script (RECOMMENDED)
+The simplest way to install and register a VM agent is with our unified setup script. This handles **everything automatically**:
 
-The enhanced installation script provides complete orchestrator integration with automatic registration, certificate setup, and service configuration.
-
-#### Step 1: Get Provisioning Token
-
-First, get a provisioning token from your orchestrator:
-
+### **Method 1: One-liner Installation (Production)**
 ```bash
-# Copy the provisioning token helper script to your local machine
-curl -O https://your-repo.com/setup_provisioning_token.sh
-chmod +x setup_provisioning_token.sh
-
-# Run the token setup script
-./setup_provisioning_token.sh
+curl -fsSL https://your-server.com/setup.sh | sudo bash -s -- \
+  --provisioning-token "eyJhbGciOiJIUzI1NiIs..." \
+  --server-url "https://your-orchestrator.com"
 ```
 
-This interactive script will:
-- Guide you through authentication with the orchestrator
-- List your available organizations
-- Create a provisioning token (expires in 24 hours)
-- Provide complete installation instructions
-
-#### Step 2: Install Agent with Full Orchestrator Integration
-
-Copy and run the enhanced installation script on your target VM:
-
+### **Method 2: Download and Run**
 ```bash
-# Copy the enhanced installation script to your VM
-scp enhanced_install_vm_agent.sh user@target-vm:/tmp/
+# Download the script
+curl -fsSL https://your-server.com/setup.sh -o setup.sh
+chmod +x setup.sh
 
-# SSH to the target VM and run installation
-ssh user@target-vm
-sudo ORCHESTRATOR_URL="https://your-orchestrator.com" \
-     PROVISIONING_TOKEN="prov_abc123..." \
-     /tmp/enhanced_install_vm_agent.sh
+# Run with your parameters
+sudo ./setup.sh \
+  --provisioning-token "prov_abc123..." \
+  --server-url "https://your-orchestrator.com"
 ```
 
-**What this does:**
-- ✅ Tests orchestrator connectivity
-- ✅ Generates VM credentials (ID, API key, CSR)
-- ✅ Calls `/api/v1/agents/register` endpoint with provisioning token
-- ✅ Downloads and installs signed certificates
-- ✅ Creates proper configuration with WebSocket URL
-- ✅ Sets up systemd service with security settings
-- ✅ Starts and verifies the service
-- ✅ Agent appears in orchestrator dashboard immediately
+### **Available Options:**
+- `--provisioning-token TOKEN` - **Required**: Get from orchestrator dashboard
+- `--server-url URL` - **Required**: Your orchestrator URL
+- `--skip-dependencies` - Skip system dependency installation
+- `--force-reinstall` - Force reinstall even if already installed  
+- `--debug` - Enable debug logging
+- `--help` - Show detailed help
 
-#### Step 3: Verify Installation
+### **What This Script Does Automatically:**
+1. 📦 **Installs system dependencies** (curl, openssl, jq, python3)
+2. 🐍 **Sets up Python environment** and installs packages
+3. 🔐 **Downloads CA certificate** from orchestrator
+4. 🔑 **Generates VM credentials** and CSR
+5. 📝 **Registers agent** with orchestrator using provisioning token
+6. 📜 **Installs signed certificates** for mTLS authentication
+7. ⚙️ **Creates complete agent configuration** with WebSocket URLs
+8. 👤 **Sets up system user** and proper permissions
+9. 🚀 **Creates and starts systemd service** with security hardening
+10. ✅ **Verifies everything is working** and shows status
 
-```bash
-# Check service status
-sudo systemctl status vm-agent
+### **Result:**
+- ✅ **Agent visible in orchestrator dashboard immediately**
+- ✅ **Real-time WebSocket connection established**
+- ✅ **Certificate-based authentication working**
+- ✅ **Automatic heartbeat monitoring active**
+- ✅ **Ready to receive commands from orchestrator**
 
-# Check health endpoint
-curl http://localhost:8080/health
+### **Getting Your Provisioning Token:**
 
-# View logs
-sudo journalctl -u vm-agent -f
+1. **Log in to your orchestrator dashboard**
+2. **Navigate to Organizations → Your Org → Agent Management**
+3. **Click "Create Provisioning Token"**
+4. **Copy the token** (expires in 24 hours)
+5. **Use in installation command above**
 
-# The agent should now be visible and responsive in your orchestrator dashboard
-```
+## 🔧 Alternative Installation Methods
 
 ### Method 2: CLI-based Installation
 
@@ -174,6 +169,7 @@ server:
 orchestrator:
   url: "https://your-orchestrator.com"
   websocket_url: "wss://your-orchestrator.com/api/v1/agents/vm-id/ws"
+  agent_id: "agent_789"
   heartbeat_interval: 30
   command_poll_interval: 5
 
@@ -202,17 +198,6 @@ logging:
   file: "/var/log/vm-agent/agent.log"
   max_size: "100MB"
   backup_count: 5
-```
-
-### Environment Variables
-
-```bash
-# Required for installation
-export ORCHESTRATOR_URL="https://your-orchestrator.com"
-export PROVISIONING_TOKEN="prov_abc123..."
-
-# Optional
-export ORGANIZATION_ID="org_456"  # Alternative to provisioning token
 ```
 
 ## 🔐 Security Architecture
@@ -249,6 +234,7 @@ export ORGANIZATION_ID="org_456"  # Alternative to provisioning token
 │   └── websocket_url      # WebSocket connection URL
 ├── config/
 │   └── agent_config.yaml  # Main configuration file
+├── venv/                  # Python virtual environment
 └── src/
     └── vm_agent/          # Agent source code
 ```
@@ -281,13 +267,22 @@ export ORGANIZATION_ID="org_456"  # Alternative to provisioning token
 ### Installation & Provisioning
 
 ```bash
-# Get provisioning token (run locally)
-./setup_provisioning_token.sh
+# One-liner installation (RECOMMENDED)
+curl -fsSL https://your-server.com/setup.sh | sudo bash -s -- \
+  --provisioning-token "prov_abc123..." \
+  --server-url "https://orchestrator.example.com"
 
-# Install with enhanced script (run on target VM)
-sudo ORCHESTRATOR_URL="https://orchestrator.example.com" \
-     PROVISIONING_TOKEN="prov_123..." \
-     ./enhanced_install_vm_agent.sh
+# With additional options
+curl -fsSL https://your-server.com/setup.sh | sudo bash -s -- \
+  --provisioning-token "prov_abc123..." \
+  --server-url "https://orchestrator.example.com" \
+  --force-reinstall \
+  --debug
+
+# Direct script execution
+sudo ./setup.sh \
+  --provisioning-token "prov_abc123..." \
+  --server-url "https://orchestrator.example.com"
 
 # CLI installation (if vm-agent is already available)
 vm-agent install --orchestrator-url "https://orchestrator.example.com" \
