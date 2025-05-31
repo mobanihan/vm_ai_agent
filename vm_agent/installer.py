@@ -3,7 +3,7 @@
 VM Agent Installer
 
 Handles installation and setup of VM agent as a system service.
-Supports systemd on Linux systems.
+Supports systemd on Linux systems with robust virtual environment handling.
 """
 
 import os
@@ -12,14 +12,24 @@ import subprocess
 import shutil
 import click
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import logging
 
 logger = logging.getLogger(__name__)
 
+# Required packages for VM Agent
+REQUIRED_PACKAGES = [
+    'aiofiles>=24.1.0',
+    'aiohttp>=3.8.0',
+    'aiohttp-cors>=0.7.0',
+    'PyYAML>=6.0',
+    'cryptography>=41.0.0',
+    'psutil>=5.9.0',
+    'websockets>=11.0',
+]
 
 class VMAgentInstaller:
-    """Installer for VM Agent system service"""
+    """Installer for VM Agent system service with robust environment handling"""
     
     def __init__(self):
         self.install_dir = Path("/opt/vm-agent")
@@ -46,6 +56,68 @@ class VMAgentInstaller:
             return False
         
         return True
+    
+    def detect_python_environment(self) -> Dict[str, Any]:
+        """Detect current Python environment and provide recommendations"""
+        env_info = {
+            'current_python': sys.executable,
+            'is_venv': hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix),
+            'venv_path': None,
+            'system_python': '/usr/bin/python3',
+            'recommendations': []
+        }
+        
+        # Detect virtual environment path
+        if env_info['is_venv']:
+            env_info['venv_path'] = sys.executable
+            env_info['recommendations'].append("Virtual environment detected - consider system-wide installation for stability")
+        
+        # Check if system Python has required packages
+        system_has_packages = self.check_python_imports(env_info['system_python'])
+        venv_has_packages = False
+        
+        if env_info['is_venv']:
+            venv_has_packages = self.check_python_imports(env_info['current_python'])
+        
+        env_info['system_has_packages'] = system_has_packages
+        env_info['venv_has_packages'] = venv_has_packages
+        
+        # Generate recommendations
+        if not system_has_packages and not venv_has_packages:
+            env_info['recommendations'].append("Install dependencies system-wide for reliability")
+        elif env_info['is_venv'] and not system_has_packages:
+            env_info['recommendations'].append("Virtual environment has packages but system doesn't - consider --install-system-wide")
+        
+        return env_info
+    
+    def check_python_imports(self, python_path: str) -> bool:
+        """Check if Python can import required modules"""
+        test_cmd = f"{python_path} -c 'import aiofiles, aiohttp, vm_agent' 2>/dev/null"
+        try:
+            result = subprocess.run(test_cmd, shell=True, capture_output=True)
+            return result.returncode == 0
+        except:
+            return False
+    
+    def install_dependencies_system_wide(self) -> bool:
+        """Install required dependencies system-wide"""
+        click.echo("🔧 Installing dependencies system-wide...")
+        
+        try:
+            packages = ' '.join(REQUIRED_PACKAGES)
+            cmd = f"pip3 install {packages}"
+            
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                click.echo("✅ Dependencies installed system-wide successfully")
+                return True
+            else:
+                click.echo(f"❌ Failed to install dependencies: {result.stderr}")
+                return False
+        except Exception as e:
+            click.echo(f"❌ Failed to install dependencies: {e}")
+            return False
     
     def create_user(self) -> bool:
         """Create vm-agent user and group"""
@@ -101,49 +173,72 @@ class VMAgentInstaller:
             click.echo(f"❌ Failed to create directories: {e}")
             return False
     
-    def create_wrapper_script(self) -> bool:
-        """Create an intelligent wrapper script that handles environment detection"""
+    def create_robust_wrapper_script(self, env_info: Dict[str, Any]) -> bool:
+        """Create an intelligent wrapper script that handles environment detection and fixes"""
         try:
-            # Auto-detect the correct Python interpreter
-            python_executable = sys.executable
-            
             wrapper_content = f"""#!/bin/bash
-# VM Agent Wrapper Script - Auto-generated
-# Handles virtual environment detection and proper Python path setup
+# VM Agent Robust Wrapper Script - Auto-generated
+# Handles virtual environment detection, dependency validation, and automatic fixes
 
 # Set working directory
 cd {self.install_dir}
 
-# Auto-detect Python environment
-DETECTED_PYTHON="{python_executable}"
+# Auto-detect Python environment with fallbacks
+DETECTED_PYTHON="{env_info['current_python']}"
+SYSTEM_PYTHON="/usr/bin/python3"
 
-# If the detected Python doesn't exist (e.g., venv was moved), try fallbacks
-if [ ! -f "$DETECTED_PYTHON" ]; then
-    echo "⚠️  Original Python not found: $DETECTED_PYTHON"
+echo "🔍 VM Agent Environment Detection"
+
+# Function to test Python imports
+test_python_imports() {{
+    local python_path="$1"
+    if [ ! -f "$python_path" ]; then
+        return 1
+    fi
     
-    # Try common virtual environment locations
-    for venv_path in "/root/vm_ai_agent/venv/bin/python3" "/opt/vm-agent/venv/bin/python3" "/usr/local/bin/python3" "/usr/bin/python3"; do
-        if [ -f "$venv_path" ]; then
-            echo "✓ Using fallback Python: $venv_path"
-            DETECTED_PYTHON="$venv_path"
-            break
-        fi
-    done
-fi
+    if "$python_path" -c "import aiofiles, aiohttp, vm_agent" 2>/dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}}
 
-# Test if Python can import required modules
-if ! "$DETECTED_PYTHON" -c "import aiofiles, aiohttp, vm_agent" 2>/dev/null; then
-    echo "❌ Python at $DETECTED_PYTHON cannot import required modules"
-    echo "📋 Available Python installations:"
-    find /usr/bin /usr/local/bin /root -name "python3*" 2>/dev/null | head -10
-    exit 1
+# Test the detected Python first
+if test_python_imports "$DETECTED_PYTHON"; then
+    echo "✅ Using detected Python: $DETECTED_PYTHON"
+    PYTHON_TO_USE="$DETECTED_PYTHON"
+elif test_python_imports "$SYSTEM_PYTHON"; then
+    echo "✅ Using system Python: $SYSTEM_PYTHON"
+    PYTHON_TO_USE="$SYSTEM_PYTHON"
+else
+    echo "❌ Neither detected nor system Python can import required modules"
+    echo "🔧 Attempting automatic fix..."
+    
+    # Try to install dependencies system-wide
+    if pip3 install {' '.join(REQUIRED_PACKAGES)} 2>/dev/null; then
+        echo "✅ Dependencies installed, retrying..."
+        if test_python_imports "$SYSTEM_PYTHON"; then
+            echo "✅ System Python now works after dependency installation"
+            PYTHON_TO_USE="$SYSTEM_PYTHON"
+        else
+            echo "❌ System Python still doesn't work"
+            exit 1
+        fi
+    else
+        echo "❌ Failed to install dependencies automatically"
+        echo "📋 Manual fix required:"
+        echo "  sudo pip3 install {' '.join(REQUIRED_PACKAGES)}"
+        echo "  sudo systemctl restart vm-agent"
+        exit 1
+    fi
 fi
 
 # Set up environment
 export PYTHONPATH="{self.install_dir}:$PYTHONPATH"
 
 # Execute the vm-agent server
-exec "$DETECTED_PYTHON" -m vm_agent.server "$@"
+echo "🚀 Starting VM Agent with Python: $PYTHON_TO_USE"
+exec "$PYTHON_TO_USE" -m vm_agent.server "$@"
 """
             
             wrapper_path = self.install_dir / "vm-agent-wrapper.sh"
@@ -154,7 +249,7 @@ exec "$DETECTED_PYTHON" -m vm_agent.server "$@"
             wrapper_path.chmod(0o755)
             shutil.chown(wrapper_path, self.user, self.group)
             
-            click.echo(f"✓ Created wrapper script: {wrapper_path}")
+            click.echo(f"✓ Created robust wrapper script: {wrapper_path}")
             return True
             
         except Exception as e:
@@ -225,27 +320,27 @@ logging:
             click.echo(f"❌ Failed to create config: {e}")
             return False
     
-    def install_service_file(self, use_wrapper: bool = False) -> bool:
-        """Install systemd service file"""
+    def install_service_file(self, env_info: Dict[str, Any], use_wrapper: bool = False, install_system_wide: bool = False) -> bool:
+        """Install systemd service file with smart environment handling"""
         try:
             if use_wrapper:
-                # Create wrapper script first
-                if not self.create_wrapper_script():
+                # Create robust wrapper script
+                if not self.create_robust_wrapper_script(env_info):
                     return False
                 
                 exec_start = f"{self.install_dir}/vm-agent-wrapper.sh"
-                click.echo("✓ Using wrapper script for service")
+                click.echo("✓ Using robust wrapper script for service")
+                
+            elif install_system_wide or not env_info['is_venv']:
+                # Use system Python for reliability
+                exec_start = f"/usr/bin/python3 -m vm_agent.server"
+                click.echo("✓ Using system Python for service")
+                
             else:
-                # Auto-detect the correct Python interpreter
-                python_executable = sys.executable
-                
-                # If we're in a virtual environment, use that Python
-                if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
-                    click.echo(f"✓ Detected virtual environment, using: {python_executable}")
-                else:
-                    click.echo(f"✓ Using system Python: {python_executable}")
-                
-                exec_start = f"{python_executable} -m vm_agent.server"
+                # Use current Python (virtual environment)
+                exec_start = f"{env_info['current_python']} -m vm_agent.server"
+                click.echo(f"⚠️  Using virtual environment Python: {env_info['current_python']}")
+                click.echo("   Consider using --install-system-wide for production stability")
             
             service_content = f"""[Unit]
 Description=VM Agent for AI Infrastructure Management
@@ -309,21 +404,87 @@ WantedBy=multi-user.target
             click.echo(f"❌ Failed to enable/start service: {e}")
             return False
     
+    def verify_installation(self) -> bool:
+        """Verify the installation is working"""
+        import time
+        
+        click.echo("🔍 Verifying installation...")
+        
+        # Give service time to start
+        time.sleep(3)
+        
+        try:
+            # Check service status
+            result = subprocess.run(["systemctl", "is-active", self.service_name], 
+                                  capture_output=True, text=True)
+            
+            if result.stdout.strip() == "active":
+                click.echo("✅ Service is running")
+            else:
+                click.echo("⚠️  Service may not be running properly")
+                return False
+            
+            # Test health endpoint
+            try:
+                import urllib.request
+                response = urllib.request.urlopen("http://localhost:8080/health", timeout=5)
+                if response.status == 200:
+                    click.echo("✅ Health endpoint is accessible")
+                    return True
+                else:
+                    click.echo("⚠️  Health endpoint returned non-200 status")
+                    return False
+            except:
+                click.echo("⚠️  Health endpoint not accessible (may still be starting)")
+                return False
+                
+        except Exception as e:
+            click.echo(f"⚠️  Verification failed: {e}")
+            return False
+    
     def install(
         self, 
         orchestrator_url: str,
         provisioning_token: Optional[str] = None,
         tenant_id: Optional[str] = None,
         use_wrapper: bool = False,
+        install_system_wide: bool = False,
         **kwargs
     ) -> bool:
-        """Complete installation process"""
+        """Complete installation process with robust environment handling"""
         
         click.echo("🚀 Installing VM Agent as system service...")
         
         # Check requirements
         if not self.check_requirements():
             return False
+        
+        # Detect Python environment
+        env_info = self.detect_python_environment()
+        
+        click.echo("\n🔍 Environment Analysis:")
+        click.echo(f"  Current Python: {env_info['current_python']}")
+        click.echo(f"  Virtual Environment: {'Yes' if env_info['is_venv'] else 'No'}")
+        if env_info['is_venv']:
+            click.echo(f"  Virtual Environment Path: {env_info['venv_path']}")
+        click.echo(f"  System Python has packages: {'Yes' if env_info['system_has_packages'] else 'No'}")
+        if env_info['is_venv']:
+            click.echo(f"  Virtual Environment has packages: {'Yes' if env_info['venv_has_packages'] else 'No'}")
+        
+        # Show recommendations
+        if env_info['recommendations']:
+            click.echo("\n💡 Recommendations:")
+            for rec in env_info['recommendations']:
+                click.echo(f"  • {rec}")
+        
+        # Handle dependencies
+        if install_system_wide or (env_info['is_venv'] and not env_info['system_has_packages']):
+            click.echo("\n🔧 Installing dependencies system-wide for stability...")
+            if not self.install_dependencies_system_wide():
+                if not use_wrapper:
+                    click.echo("❌ Failed to install dependencies. Consider using --use-wrapper flag.")
+                    return False
+            env_info['system_has_packages'] = True
         
         # Create user
         if not self.create_user():
@@ -338,24 +499,87 @@ WantedBy=multi-user.target
             return False
         
         # Install service
-        if not self.install_service_file(use_wrapper=use_wrapper):
+        if not self.install_service_file(env_info, use_wrapper=use_wrapper, install_system_wide=install_system_wide):
             return False
         
         # Enable and start service
         if not self.enable_service():
             return False
         
+        # Verify installation
+        verification_success = self.verify_installation()
+        
         click.echo("\n✅ VM Agent installed successfully!")
         click.echo(f"📁 Installation directory: {self.install_dir}")
         click.echo(f"🔧 Service name: {self.service_name}")
+        
         if use_wrapper:
             click.echo(f"📜 Wrapper script: {self.install_dir}/vm-agent-wrapper.sh")
+        elif install_system_wide or not env_info['is_venv']:
+            click.echo("🐍 Using system Python for stability")
+        else:
+            click.echo("⚠️  Using virtual environment Python - consider --install-system-wide for production")
+        
         click.echo("\n📋 Useful commands:")
         click.echo(f"  sudo systemctl status {self.service_name}")
         click.echo(f"  sudo systemctl restart {self.service_name}")
         click.echo(f"  sudo journalctl -u {self.service_name} -f")
+        click.echo(f"  curl http://localhost:8080/health")
+        
+        if not verification_success:
+            click.echo("\n⚠️  Installation completed but verification failed.")
+            click.echo("Check service status and logs for any issues.")
         
         return True
+    
+    def fix_existing_installation(self) -> bool:
+        """Fix an existing installation with virtual environment issues"""
+        click.echo("🔧 Fixing existing VM Agent installation...")
+        
+        if not self.check_requirements():
+            return False
+        
+        try:
+            # Stop service
+            subprocess.run(["systemctl", "stop", self.service_name], check=False)
+            
+            # Install dependencies system-wide
+            if not self.install_dependencies_system_wide():
+                return False
+            
+            # Update service to use system Python
+            if os.path.exists(self.service_file):
+                with open(self.service_file, 'r') as f:
+                    content = f.read()
+                
+                # Update ExecStart line
+                lines = content.split('\n')
+                for i, line in enumerate(lines):
+                    if line.strip().startswith('ExecStart='):
+                        lines[i] = "ExecStart=/usr/bin/python3 -m vm_agent.server"
+                        break
+                
+                with open(self.service_file, 'w') as f:
+                    f.write('\n'.join(lines))
+                
+                # Reload systemd
+                subprocess.run(["systemctl", "daemon-reload"], check=True)
+                click.echo("✓ Updated service to use system Python")
+            
+            # Restart service
+            subprocess.run(["systemctl", "start", self.service_name], check=True)
+            
+            # Verify fix
+            if self.verify_installation():
+                click.echo("✅ Fix completed successfully!")
+                return True
+            else:
+                click.echo("⚠️  Fix completed but verification failed. Check logs.")
+                return False
+                
+        except Exception as e:
+            click.echo(f"❌ Fix failed: {e}")
+            return False
     
     def uninstall(self) -> bool:
         """Uninstall the VM agent service"""
@@ -392,13 +616,15 @@ WantedBy=multi-user.target
 
 
 @click.command()
-@click.option('--orchestrator-url', required=True, help='Orchestrator URL')
+@click.option('--orchestrator-url', required=False, help='Orchestrator URL')
 @click.option('--provisioning-token', help='Provisioning token for auto-setup')
 @click.option('--tenant-id', help='Manual tenant ID')
 @click.option('--use-wrapper', is_flag=True, help='Use wrapper script for complex environments')
+@click.option('--install-system-wide', is_flag=True, help='Install dependencies system-wide (recommended for production)')
+@click.option('--fix-existing', is_flag=True, help='Fix existing installation with virtual environment issues')
 @click.option('--uninstall', is_flag=True, help='Uninstall the service')
-def main(orchestrator_url: str, provisioning_token: str, tenant_id: str, use_wrapper: bool, uninstall: bool):
-    """VM Agent Installer - Install or uninstall the VM agent service"""
+def main(orchestrator_url: str, provisioning_token: str, tenant_id: str, use_wrapper: bool, install_system_wide: bool, fix_existing: bool, uninstall: bool):
+    """VM Agent Installer - Install, fix, or uninstall the VM agent service"""
     
     # Configure logging
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -407,13 +633,21 @@ def main(orchestrator_url: str, provisioning_token: str, tenant_id: str, use_wra
     
     if uninstall:
         success = installer.uninstall()
-    else:
+    elif fix_existing:
+        success = installer.fix_existing_installation()
+    elif orchestrator_url:
         success = installer.install(
             orchestrator_url=orchestrator_url,
             provisioning_token=provisioning_token,
             tenant_id=tenant_id,
-            use_wrapper=use_wrapper
+            use_wrapper=use_wrapper,
+            install_system_wide=install_system_wide
         )
+    else:
+        click.echo("❌ --orchestrator-url is required for installation")
+        click.echo("   Use --fix-existing to fix an existing installation")
+        click.echo("   Use --uninstall to remove the service")
+        success = False
     
     sys.exit(0 if success else 1)
 

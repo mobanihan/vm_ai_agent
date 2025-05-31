@@ -47,17 +47,37 @@ A production-ready VM agent for AI infrastructure management with MCP (Model Con
 
 ### Installation Options
 
-#### Option 1: Simple Installation (Recommended)
+#### Option 1: Fresh Installation with System-wide Dependencies (RECOMMENDED)
 
 ```bash
 # Install the package
 pip install ai-infra-vm-agent
 
-# Install as system service (auto-detects your Python environment)
-sudo python3 -m vm_agent.installer --orchestrator-url https://your-orchestrator.com
+# Install as system service with system-wide dependencies (prevents virtual environment issues)
+sudo python3 -m vm_agent.installer --orchestrator-url https://your-orchestrator.com --install-system-wide
 ```
 
-#### Option 2: Development Installation
+#### Option 2: Fix Existing Installation with Virtual Environment Issues
+
+If you already have an installation that's failing due to virtual environment issues:
+
+```bash
+# Fix existing installation (installs dependencies system-wide and updates service)
+sudo python3 -m vm_agent.installer --fix-existing
+```
+
+#### Option 3: Robust Installation with Wrapper Script
+
+For complex environments or when you want maximum reliability:
+
+```bash
+# Install with intelligent wrapper script that handles environment changes
+sudo python3 -m vm_agent.installer \
+    --orchestrator-url https://your-orchestrator.com \
+    --use-wrapper
+```
+
+#### Option 4: Development Installation
 
 ```bash
 # Clone the repository
@@ -71,28 +91,20 @@ source venv/bin/activate
 # Install in development mode
 pip install -e .
 
-# Install as system service (will use your virtual environment)
-sudo python3 -m vm_agent.installer --orchestrator-url https://your-orchestrator.com
-```
-
-#### Option 3: Complex Environments (with Wrapper Script)
-
-For environments with complex Python setups or where the Python environment might change:
-
-```bash
-# Install with intelligent wrapper script
+# Install as system service (enhanced installer detects your environment automatically)
 sudo python3 -m vm_agent.installer \
     --orchestrator-url https://your-orchestrator.com \
-    --use-wrapper
+    --install-system-wide
 ```
 
-#### Option 4: With Provisioning Token
+#### Option 5: With Provisioning Token
 
 ```bash
 # Automated setup with provisioning token
 sudo python3 -m vm_agent.installer \
     --orchestrator-url https://your-orchestrator.com \
-    --provisioning-token "your-token-here"
+    --provisioning-token "your-token-here" \
+    --install-system-wide
 ```
 
 ### Verification
@@ -127,6 +139,86 @@ This will check:
 - ✅ Installation paths and systemd service
 - ✅ Provides specific fix suggestions
 
+### 🔥 Virtual Environment Issues (COMMON ISSUE)
+
+**This is the most common deployment issue!** If you see errors like:
+
+```
+❌ Python at /usr/bin/python3 cannot import required modules
+ModuleNotFoundError: No module named 'aiofiles'
+```
+
+**Root Cause**: The systemd service is using system Python (`/usr/bin/python3`) but dependencies were installed in a virtual environment that no longer exists or is inaccessible.
+
+#### 🚀 Quick Fix (RECOMMENDED)
+
+Use our quick fix script that provides two solutions:
+
+```bash
+# Copy this script to your remote machine and run:
+sudo bash scripts/quick_fix.sh
+```
+
+**Option 1: System-wide Installation (Recommended)**
+- Installs all dependencies system-wide
+- Updates systemd service to use `/usr/bin/python3`
+- Fast, reliable, and production-ready
+
+**Option 2: Recreate Virtual Environment**
+- Recreates the missing virtual environment
+- Installs dependencies in isolation
+- Updates systemd service to use the new virtual environment
+
+#### 🛠️ Manual Fix Options
+
+**Option A: Install Dependencies System-wide**
+```bash
+# Install all required dependencies system-wide
+sudo pip3 install aiofiles>=24.1.0 aiohttp>=3.8.0 aiohttp-cors>=0.7.0 PyYAML>=6.0 cryptography>=41.0.0 psutil>=5.9.0 websockets>=11.0
+
+# Update systemd service to use system Python
+sudo sed -i 's|ExecStart=.*|ExecStart=/usr/bin/python3 -m vm_agent.server|' /etc/systemd/system/vm-agent.service
+sudo systemctl daemon-reload
+sudo systemctl restart vm-agent
+```
+
+**Option B: Recreate Virtual Environment**
+```bash
+# Create new virtual environment at expected location
+sudo mkdir -p /root/vm_ai_agent
+sudo python3 -m venv /root/vm_ai_agent/venv
+
+# Install dependencies in virtual environment
+sudo /root/vm_ai_agent/venv/bin/pip install aiofiles>=24.1.0 aiohttp>=3.8.0 aiohttp-cors>=0.7.0 PyYAML>=6.0 cryptography>=41.0.0 psutil>=5.9.0 websockets>=11.0
+
+# Update systemd service to use virtual environment Python
+sudo sed -i 's|ExecStart=.*|ExecStart=/root/vm_ai_agent/venv/bin/python3 -m vm_agent.server|' /etc/systemd/system/vm-agent.service
+sudo systemctl daemon-reload
+sudo systemctl restart vm-agent
+```
+
+**Option C: Complete Reinstallation**
+```bash
+# Uninstall and reinstall with proper environment detection
+sudo python3 -m vm_agent.installer --uninstall
+sudo python3 -m vm_agent.installer --orchestrator-url YOUR_URL --use-wrapper
+```
+
+#### 🔍 Verification
+
+After applying any fix, verify the service works:
+
+```bash
+# Check service status
+sudo systemctl status vm-agent
+
+# Check health endpoint
+curl http://localhost:8080/health
+
+# Check logs for any remaining issues
+sudo journalctl -u vm-agent -f
+```
+
 ### Common Installation Issues
 
 #### Issue: "ModuleNotFoundError: No module named 'aiofiles'"
@@ -135,15 +227,13 @@ This will check:
 
 **Solutions**:
 ```bash
-# Option 1: Reinstall with auto-detection
-sudo python3 -m vm_agent.installer --uninstall
-sudo python3 -m vm_agent.installer --orchestrator-url YOUR_URL
+# Use the quick fix script (RECOMMENDED)
+sudo bash scripts/quick_fix.sh
 
-# Option 2: Use wrapper script
-sudo python3 -m vm_agent.installer --orchestrator-url YOUR_URL --use-wrapper
-
-# Option 3: Install dependencies system-wide
-sudo pip3 install aiofiles aiohttp aiohttp-cors pyyaml cryptography psutil
+# OR manually install system-wide
+sudo pip3 install aiofiles aiohttp aiohttp-cors pyyaml cryptography psutil websockets
+sudo sed -i 's|ExecStart=.*|ExecStart=/usr/bin/python3 -m vm_agent.server|' /etc/systemd/system/vm-agent.service
+sudo systemctl daemon-reload && sudo systemctl restart vm-agent
 ```
 
 #### Issue: Service fails to start
@@ -175,24 +265,36 @@ sudo ls -la /opt/vm-agent/security/
 ### Installation Command Reference
 
 ```bash
-# Basic installation
-sudo python3 -m vm_agent.installer --orchestrator-url URL
+# 🚀 RECOMMENDED: Fresh installation with system-wide dependencies
+sudo python3 -m vm_agent.installer --orchestrator-url URL --install-system-wide
 
-# With provisioning token
-sudo python3 -m vm_agent.installer --orchestrator-url URL --provisioning-token TOKEN
+# 🔧 Fix existing virtual environment issues (MOST COMMON FIX)
+sudo python3 -m vm_agent.installer --fix-existing
 
-# With wrapper script (for complex environments)
+# 🛡️ Robust installation with wrapper script (complex environments)
 sudo python3 -m vm_agent.installer --orchestrator-url URL --use-wrapper
 
-# With tenant ID
-sudo python3 -m vm_agent.installer --orchestrator-url URL --tenant-id TENANT
+# ⚡ Automated installation with provisioning token
+sudo python3 -m vm_agent.installer --orchestrator-url URL --provisioning-token TOKEN --install-system-wide
 
-# Uninstall
+# 🏢 Installation with specific tenant ID
+sudo python3 -m vm_agent.installer --orchestrator-url URL --tenant-id TENANT --install-system-wide
+
+# 🗑️ Uninstall service completely
 sudo python3 -m vm_agent.installer --uninstall
 
-# Get help
+# ❓ Get help and see all options
 python3 -m vm_agent.installer --help
 ```
+
+#### Command Options Explained
+
+- `--install-system-wide`: Install dependencies system-wide for maximum stability (recommended for production)
+- `--fix-existing`: Fix existing installation that has virtual environment issues  
+- `--use-wrapper`: Create intelligent wrapper script that handles environment changes automatically
+- `--provisioning-token`: Use token for automated orchestrator registration
+- `--tenant-id`: Manually specify tenant ID during installation
+- `--uninstall`: Remove the VM agent service and all files
 
 ## Basic Usage
 
@@ -402,17 +504,24 @@ vm-agent server --daemon
 ### Installation & Setup
 
 ```bash
-# Automated installation
-vm-agent install --orchestrator-url URL --provisioning-token TOKEN
+# Fresh installation with system-wide dependencies (RECOMMENDED)
+vm-agent install --orchestrator-url URL --install-system-wide
 
-# Manual installation
-vm-agent install --orchestrator-url URL --tenant-id TENANT
+# Fix existing installation with virtual environment issues
+vm-agent install --fix-existing
 
-# Installation with wrapper script
+# Installation with wrapper script for complex environments
 vm-agent install --orchestrator-url URL --use-wrapper
 
-# Force reinstall
-vm-agent install --orchestrator-url URL --provisioning-token TOKEN --force
+# Automated installation with provisioning token
+vm-agent install --orchestrator-url URL --provisioning-token TOKEN --install-system-wide
+
+# Installation with tenant ID
+vm-agent install --orchestrator-url URL --tenant-id TENANT --install-system-wide
+
+# Force reinstall (uninstall first, then reinstall)
+vm-agent install --uninstall
+vm-agent install --orchestrator-url URL --install-system-wide
 
 # Uninstall
 vm-agent install --uninstall
