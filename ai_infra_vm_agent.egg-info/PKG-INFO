@@ -1,0 +1,553 @@
+Metadata-Version: 2.4
+Name: ai-infra-vm-agent
+Version: 1.0.0
+Summary: Production-ready VM agent for AI infrastructure management with MCP protocol support
+Home-page: https://github.com/ai-infra/vm-agent
+Author: AI Infra Team
+Author-email: AI Infra Team <contact@ai-infra.com>
+Maintainer-email: AI Infra Team <contact@ai-infra.com>
+License-Expression: MIT
+Project-URL: Homepage, https://github.com/ai-infra/vm-agent
+Project-URL: Documentation, https://docs.ai-infra.com/vm-agent
+Project-URL: Repository, https://github.com/ai-infra/vm-agent.git
+Project-URL: Bug Tracker, https://github.com/ai-infra/vm-agent/issues
+Keywords: vm,agent,infrastructure,management,mcp,protocol,automation
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: System Administrators
+Classifier: Operating System :: POSIX :: Linux
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: System :: Systems Administration
+Classifier: Topic :: System :: Monitoring
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: aiohttp>=3.8.0
+Requires-Dist: aiohttp-cors>=0.7.0
+Requires-Dist: aiofiles>=24.1.0
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: cryptography>=3.4.8
+Requires-Dist: psutil>=5.8.0
+Requires-Dist: websockets>=10.0
+Requires-Dist: asyncio-mqtt>=0.11.0
+Requires-Dist: pyjwt>=2.4.0
+Requires-Dist: paramiko>=2.11.0
+Requires-Dist: mcp>=1.0.0
+Requires-Dist: click>=8.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.21.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Requires-Dist: black>=22.0.0; extra == "dev"
+Requires-Dist: flake8>=5.0.0; extra == "dev"
+Requires-Dist: mypy>=1.0.0; extra == "dev"
+Requires-Dist: pre-commit>=2.20.0; extra == "dev"
+Provides-Extra: monitoring
+Requires-Dist: prometheus-client>=0.14.0; extra == "monitoring"
+Requires-Dist: grafana-api>=1.0.3; extra == "monitoring"
+Dynamic: author
+Dynamic: home-page
+Dynamic: license-file
+Dynamic: requires-python
+
+# AI Infra VM Agent
+
+[![PyPI version](https://badge.fury.io/py/ai-infra-vm-agent.svg)](https://badge.fury.io/py/ai-infra-vm-agent)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+A production-ready VM agent for AI infrastructure management with MCP (Model Context Protocol) support, providing secure, multi-tenant VM management capabilities.
+
+## Features
+
+### 🔧 **Core Capabilities**
+- **Shell Command Execution**: Secure command execution with timeout and logging
+- **File System Operations**: Read, write, and manage files with proper permissions
+- **System Monitoring**: Real-time metrics collection (CPU, memory, disk, network)
+- **Log Analysis**: Intelligent log parsing and pattern recognition
+- **WebSocket Communication**: Real-time bidirectional communication
+- **MCP Protocol Support**: Standard protocol for AI tool integration
+
+### 🔒 **Security & Multi-tenancy**
+- **Certificate-based Authentication**: mTLS support for secure connections
+- **API Key Management**: Secure API key generation and validation
+- **Multi-tenant Isolation**: Organization-based resource isolation
+- **Encrypted Communication**: End-to-end encryption for all communications
+- **Audit Logging**: Comprehensive logging for compliance and debugging
+
+### 🚀 **Production Ready**
+- **High Performance**: Async/await architecture for optimal performance
+- **Scalable**: Designed for multi-VM, multi-tenant environments
+- **Reliable**: Comprehensive error handling and recovery mechanisms
+- **Configurable**: Flexible configuration system with environment variable support
+- **Monitorable**: Built-in health checks and metrics endpoints
+
+## Quick Start
+
+### Installation
+
+```bash
+pip install ai-infra-vm-agent
+```
+
+### Basic Usage
+
+#### Starting the Agent Server
+
+```bash
+# Start with default configuration
+vm-agent server
+
+# Start with custom configuration
+vm-agent server --host 0.0.0.0 --port 8080 --ssl
+
+# Start with custom config file
+vm-agent --config /path/to/config.yaml server
+```
+
+#### Installing on a New VM
+
+```bash
+# Automated installation with provisioning token
+vm-agent install --orchestrator-url https://orchestrator.example.com --provisioning-token TOKEN
+
+# Manual installation with tenant ID
+vm-agent install --orchestrator-url https://orchestrator.example.com --tenant-id TENANT_ID
+```
+
+#### Using the Client
+
+```python
+import asyncio
+from vm_agent import connect_to_agent
+
+async def main():
+    # Connect to agent
+    async with connect_to_agent(
+        "https://vm-agent:8080",
+        api_key="your-api-key"
+    ) as client:
+        # Execute command
+        result = await client.execute_command("ls -la")
+        print(result)
+        
+        # Read file
+        content = await client.read_file("/etc/hostname")
+        print(content)
+        
+        # Get system metrics
+        metrics = await client.get_system_metrics()
+        print(metrics)
+
+asyncio.run(main())
+```
+
+## Architecture
+
+### Components
+
+```
+vm_agent/
+├── server.py          # Main agent server with MCP protocol support
+├── client.py          # Client library for connecting to agents
+├── cli.py             # Command-line interface
+├── tools/             # Tool implementations
+│   ├── shell_executor.py      # Shell command execution
+│   ├── file_manager.py        # File system operations
+│   ├── system_monitor.py      # System metrics collection
+│   ├── log_analyzer.py        # Log analysis and parsing
+│   ├── security_manager.py    # Security and authentication
+│   ├── websocket_handler.py   # WebSocket communication
+│   └── tenant_manager.py      # Multi-tenant management
+├── config/            # Configuration files
+└── systemd/           # System service files
+```
+
+### Communication Flow
+
+```
+┌─────────────────┐    HTTP/WebSocket    ┌──────────────────┐
+│   Orchestrator  │ ◄─────────────────► │    VM Agent      │
+│                 │                      │                  │
+│  - Provisioning │                      │ - Command Exec   │
+│  - Commands      │                      │ - File Ops       │
+│  - Monitoring    │                      │ - Monitoring     │
+└─────────────────┘                      └──────────────────┘
+                                                   │
+                                                   ▼
+                                          ┌──────────────────┐
+                                          │   Target VM      │
+                                          │                  │
+                                          │ - OS Operations  │
+                                          │ - Applications   │
+                                          │ - Services       │
+                                          └──────────────────┘
+```
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# Required
+export ORCHESTRATOR_URL="https://orchestrator.example.com"
+export VM_ID="vm-12345"  # Auto-generated if not provided
+
+# Optional
+export PROVISIONING_TOKEN="eyJ..."  # For automated setup
+export API_KEY="your-api-key"       # For authentication
+```
+
+### Configuration File
+
+```yaml
+# config/agent_config.yaml
+agent:
+  id: vm-agent-example
+  name: "VM Agent"
+  version: "1.0.0"
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  ssl:
+    enabled: true
+    cert_file: "/opt/vm-agent/security/server.crt"
+    key_file: "/opt/vm-agent/security/server.key"
+
+orchestrator:
+  url: "${ORCHESTRATOR_URL}"
+  heartbeat_interval: 30
+  command_poll_interval: 5
+
+security:
+  enabled: true
+  mtls: true
+  api_key_required: true
+
+tools:
+  shell_executor:
+    enabled: true
+    timeout: 300
+  file_manager:
+    enabled: true
+    max_file_size: "100MB"
+  system_monitor:
+    enabled: true
+    interval: 60
+  log_analyzer:
+    enabled: true
+    max_lines: 10000
+```
+
+## CLI Commands
+
+### Server Management
+
+```bash
+# Start server
+vm-agent server --host 0.0.0.0 --port 8080
+
+# Start with SSL disabled
+vm-agent server --no-ssl
+
+# Run in daemon mode (future feature)
+vm-agent server --daemon
+```
+
+### Installation & Setup
+
+```bash
+# Automated installation
+vm-agent install --orchestrator-url URL --provisioning-token TOKEN
+
+# Manual installation
+vm-agent install --orchestrator-url URL --tenant-id TENANT
+
+# Force reinstall
+vm-agent install --orchestrator-url URL --provisioning-token TOKEN --force
+```
+
+### Operations
+
+```bash
+# Check status
+vm-agent status
+
+# Execute commands
+vm-agent exec "ps aux"
+vm-agent exec "docker ps" --timeout 60
+
+# File operations
+vm-agent ls /var/log
+vm-agent ls /home/user --path /home/user
+
+# System monitoring
+vm-agent metrics
+
+# Log analysis
+vm-agent logs /var/log/syslog --lines 1000
+
+# Run diagnostics
+vm-agent test
+
+# Show configuration
+vm-agent config
+vm-agent config --output config.yaml
+```
+
+## API Reference
+
+### MCP Protocol Endpoints
+
+The agent implements the Model Context Protocol (MCP) for tool integration:
+
+#### Tools Available
+
+- `execute_shell_command(command: str, timeout: int = 300)`
+- `read_file(file_path: str, encoding: str = 'utf-8')`
+- `write_file(file_path: str, content: str, encoding: str = 'utf-8')`
+- `list_directory(directory_path: str)`
+- `get_system_metrics()`
+- `get_process_list()`
+- `analyze_log_file(log_path: str, lines: int = 100)`
+
+#### HTTP Endpoints
+
+- `GET /health` - Health check
+- `GET /info` - Agent information
+- `GET /api/v1/ca-certificate` - Get CA certificate
+- `POST /mcp` - MCP protocol requests
+
+## Security
+
+### Authentication Methods
+
+1. **API Key Authentication**
+   ```python
+   client = VMAgentClient("https://agent:8080", api_key="your-key")
+   ```
+
+2. **Certificate-based Authentication (mTLS)**
+   ```python
+   client = VMAgentClient(
+       "https://agent:8080",
+       ca_cert_path="/path/to/ca.crt",
+       client_cert_path="/path/to/client.crt",
+       client_key_path="/path/to/client.key"
+   )
+   ```
+
+### Certificate Management
+
+The agent automatically manages certificates for secure communication:
+
+```bash
+# Certificates are stored in:
+/opt/vm-agent/security/
+├── ca.crt              # CA certificate
+├── server.crt          # Server certificate
+├── server.key          # Server private key
+└── client.crt          # Client certificate (if applicable)
+```
+
+## Development
+
+### Setting up Development Environment
+
+```bash
+# Clone repository
+git clone https://github.com/ai-infra/vm-agent.git
+cd vm-agent
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install development dependencies
+pip install -e ".[dev]"
+
+# Install pre-commit hooks
+pre-commit install
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=vm_agent --cov-report=html
+
+# Run specific test file
+pytest tests/test_server.py
+
+# Run with verbose output
+pytest -v
+```
+
+### Code Quality
+
+```bash
+# Format code
+black vm_agent/
+
+# Lint code
+flake8 vm_agent/
+
+# Type checking
+mypy vm_agent/
+```
+
+## Deployment
+
+### Docker
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY . /app
+
+RUN pip install ai-infra-vm-agent
+
+CMD ["vm-agent", "server"]
+```
+
+### Systemd Service
+
+```bash
+# Install as system service
+sudo cp systemd/vm-agent.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable vm-agent
+sudo systemctl start vm-agent
+```
+
+### Kubernetes
+
+```yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: vm-agent
+spec:
+  template:
+    spec:
+      containers:
+      - name: vm-agent
+        image: ai-infra/vm-agent:latest
+        env:
+        - name: ORCHESTRATOR_URL
+          value: "https://orchestrator.example.com"
+        ports:
+        - containerPort: 8080
+```
+
+## Monitoring & Observability
+
+### Health Checks
+
+```bash
+# Check agent health
+curl https://agent:8080/health
+
+# Expected response:
+{
+  "status": "healthy",
+  "vm_id": "vm-12345",
+  "version": "1.0.0",
+  "tenant_status": "provisioned",
+  "tools_enabled": ["shell", "file", "system", "logs"],
+  "timestamp": "2024-01-01T12:00:00Z"
+}
+```
+
+### Metrics Collection
+
+The agent provides Prometheus-compatible metrics:
+
+```bash
+# System metrics
+curl https://agent:8080/metrics
+```
+
+### Logging
+
+Logs are written to `/var/log/vm-agent.log` with structured format:
+
+```
+2024-01-01 12:00:00 - vm_agent.server - INFO - VM Agent Server vm-12345 started
+2024-01-01 12:00:01 - vm_agent.tools.shell - INFO - Command executed: ls -la
+2024-01-01 12:00:02 - vm_agent.security - INFO - API key validated for request
+```
+
+## Troubleshooting
+
+### Common Issues
+
+#### Connection Refused
+```bash
+# Check if service is running
+sudo systemctl status vm-agent
+
+# Check logs
+sudo journalctl -u vm-agent -f
+
+# Test connectivity
+vm-agent test
+```
+
+#### Certificate Issues
+```bash
+# Verify certificates
+openssl x509 -in /opt/vm-agent/security/server.crt -text -noout
+
+# Regenerate certificates
+vm-agent install --force
+```
+
+#### Permission Denied
+```bash
+# Check file permissions
+ls -la /opt/vm-agent/
+
+# Fix permissions
+sudo chown -R vm-agent:vm-agent /opt/vm-agent/
+sudo chmod 600 /opt/vm-agent/security/*
+```
+
+## Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+### Reporting Issues
+
+Please report issues on [GitHub Issues](https://github.com/ai-infra/vm-agent/issues) with:
+- VM Agent version
+- Operating system and version
+- Configuration (sanitized)
+- Steps to reproduce
+- Expected vs actual behavior
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Support
+
+- 📖 [Documentation](https://docs.ai-infra.com/vm-agent)
+- 💬 [Discord Community](https://discord.gg/ai-infra)
+- 📧 [Email Support](mailto:support@ai-infra.com)
+- 🐛 [Issue Tracker](https://github.com/ai-infra/vm-agent/issues)
+
+---
+
+**AI Infra VM Agent** - Making VM management simple, secure, and scalable. 

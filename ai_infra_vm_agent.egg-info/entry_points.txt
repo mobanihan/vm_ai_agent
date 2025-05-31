@@ -1,0 +1,4 @@
+[console_scripts]
+vm-agent = vm_agent.cli:main
+vm-agent-install = vm_agent.installer:main
+vm-agent-server = vm_agent.server:main
